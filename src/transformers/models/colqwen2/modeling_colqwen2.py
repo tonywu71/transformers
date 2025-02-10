@@ -200,6 +200,8 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             self.embedding_dim,
         )
 
+        self.padding_side = "left"
+
         self.post_init()
 
     def get_input_embeddings(self):
