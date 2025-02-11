@@ -24,9 +24,9 @@ NOTE: This script was originally run using `torch==2.5.1` and with:
 
 ```bash
 python src/transformers/models/colqwen2/convert_colqwen2_weights_to_hf.py \
-    --model_id vidore/colqwen2-1.0-merged \
-    --revision 364a4f5df97231e233e15cbbaf0b9dbe352ba92c \
-    --original_vlm_name_or_path Qwen/Qwen2-VL-2B-Instruct \
+    --model_id vidore/colqwen2-v1.0-merged \
+    --revision eeccbae1d44bdcb0c83b1788127a2b2cad7d718e \
+    --original_vlm_name_or_path Qwen/Qwen2-VL-2B \
     --output_dir vidore/colqwen2-1.0-hf-internal \
     --push_to_hub
 ```
@@ -57,13 +57,12 @@ ORIGINAL_DTYPE = torch.bfloat16
 def rename_state_dict_keys(state_dict: Dict[str, Any]) -> Dict[str, Any]:
     new_state_dict: Dict[str, Any] = {}
     for key, value in state_dict.items():
-        new_key = key
         if key.startswith("custom_text_proj"):
             new_key = key.replace("custom_text_proj", "embedding_proj_layer")
         else:
             # The original ColQwen2 inherits from Qwen2VL, so we simply need to add the `vlm.` prefix
             # to all remaining keys.
-            new_key = key + "vlm."
+            new_key = "vlm." + key
         new_state_dict[new_key] = value
     return new_state_dict
 
@@ -162,9 +161,9 @@ if __name__ == "__main__":
         Example usage:
         ```bash
         python src/transformers/models/colqwen2/convert_colqwen2_weights_to_hf.py \
-            --model_id vidore/colqwen2-1.0-merged \
-            --revision 364a4f5df97231e233e15cbbaf0b9dbe352ba92c \
-            --original_vlm_name_or_path Qwen/Qwen2-VL-2B-Instruct \
+            --model_id vidore/colqwen2-v1.0-merged \
+            --revision eeccbae1d44bdcb0c83b1788127a2b2cad7d718e \
+            --original_vlm_name_or_path Qwen/Qwen2-VL-2B \
             --output_dir vidore/colqwen2-1.0-hf-internal \
             --push_to_hub
         ```
