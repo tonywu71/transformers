@@ -202,8 +202,8 @@ class ColPaliForRetrieval(ColPaliPreTrainedModel):
         r"""
         Returns:
         """
-        if "pixel_values" in kwargs:
-            kwargs["pixel_values"] = kwargs["pixel_values"].to(dtype=self.dtype)
+        if pixel_values is not None:
+            pixel_values = pixel_values.to(dtype=self.dtype)
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
 
         output_hidden_states = (
