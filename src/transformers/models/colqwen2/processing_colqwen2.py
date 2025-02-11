@@ -172,8 +172,6 @@ class ColQwen2Processor(ProcessorMixin):
               `None`).
             - **pixel_values** -- Pixel values to be fed to a model. Returned when `images` is not `None`.
         """
-        kwargs["padding"] = "longest" if "padding" not in kwargs else kwargs["padding"]
-        kwargs["return_tensors"] = "pt" if "return_tensors" not in kwargs else kwargs["return_tensors"]
         output_kwargs = self._merge_kwargs(
             ColQwen2ProcessorKwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
