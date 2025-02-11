@@ -84,8 +84,6 @@ class ColPaliForRetrievalOutput(ModelOutput):
     Base class for ColPali embeddings output.
 
     Args:
-        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
-            Language modeling loss (for next-token prediction).
         embeddings (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
             The embeddings of the model.
         past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
@@ -110,7 +108,6 @@ class ColPaliForRetrievalOutput(ModelOutput):
             image_hidden_states of the model produced by the vision encoder after projecting last hidden state.
     """
 
-    loss: Optional[torch.FloatTensor] = None
     embeddings: torch.Tensor = None
     past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
@@ -232,15 +229,13 @@ class ColPaliForRetrieval(ColPaliPreTrainedModel):
 
         embeddings = embeddings * attention_mask.unsqueeze(-1)  # (batch_size, sequence_length, dim)
 
-        loss = None
         if not return_dict:
             output = (embeddings,) + outputs[2:]
             output[2] = output[2] if output_hidden_states is not None else None
             output[-1] = (outputs.image_hidden_states if pixel_values is not None else None,)
-            return (loss,) + output if loss is not None else output
+            return output
 
         return ColPaliForRetrievalOutput(
-            loss=loss,
             embeddings=embeddings,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states if output_hidden_states else None,
