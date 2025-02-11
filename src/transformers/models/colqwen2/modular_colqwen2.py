@@ -19,6 +19,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
+from torch.nn import CrossEntropyLoss
+
 from transformers.models.qwen2_vl.processing_qwen2_vl import Qwen2VLProcessor
 
 from ...cache_utils import Cache
@@ -877,6 +879,7 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
+        labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -885,6 +888,8 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
+        rope_deltas: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, ModelOutput]:
         """
         Forward through the Qwen2VL backbone. Uses a custom forward method to fix an issue with the gradient flow when
@@ -924,29 +929,36 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
-
         return outputs
 
     @add_start_docstrings_to_model_forward(COLQWEN2_FOR_RETRIEVAL_INPUT_DOCSTRING)
     @replace_return_docstrings(output_type=ColQwen2ForRetrievalOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        input_ids: torch.LongTensor,
-        pixel_values: torch.FloatTensor = None,
+        input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        use_cache: Optional[bool] = None,
-        *args,
-        **kwargs,
+        pixel_values: Optional[torch.Tensor] = None,
+        pixel_values_videos: Optional[torch.FloatTensor] = None,
+        image_grid_thw: Optional[torch.LongTensor] = None,
+        video_grid_thw: Optional[torch.LongTensor] = None,
+        rope_deltas: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, ColQwen2ForRetrievalOutput]:  # noqa: F821
         r"""
         Returns:
         ```"""
-        if "pixel_values" in kwargs:
-            kwargs["pixel_values"] = kwargs["pixel_values"].to(dtype=self.dtype)
+        if pixel_values is not None:
+            pixel_values = pixel_values.to(dtype=self.dtype)
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
 
         output_hidden_states = (
@@ -956,7 +968,7 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
 
         position_ids, rope_deltas = self.get_rope_index(
             input_ids=input_ids,
-            image_grid_thw=kwargs.get("image_grid_thw", None),
+            image_grid_thw=image_grid_thw,
             video_grid_thw=None,
             attention_mask=attention_mask,
         )
@@ -965,12 +977,19 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            labels=labels,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=True,
             return_dict=return_dict,
-            *args,
-            **kwargs,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            rope_deltas=rope_deltas,
+            cache_position=cache_position,
         )
 
         last_hidden_states = outputs[0]  # (batch_size, sequence_length, hidden_size)
@@ -982,6 +1001,20 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         embeddings = embeddings * attention_mask.unsqueeze(-1)  # (batch_size, sequence_length, dim)
 
         loss = None
+        if labels is not None:
+            # Upcast to float if we need to compute the loss to avoid potential precision issues
+            logits = logits.float()
+            # Shift so that tokens < n predict n
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
+            loss_fct = CrossEntropyLoss()
+            shift_logits = shift_logits.view(-1, self.config.vocab_size)
+            shift_labels = shift_labels.view(-1)
+            # Enable model parallelism
+            shift_labels = shift_labels.to(shift_logits.device)
+            loss = loss_fct(shift_logits, shift_labels)
+
         if not return_dict:
             output = (embeddings,) + outputs[2:]
             output[2] = output[2] if output_hidden_states is not None else None
