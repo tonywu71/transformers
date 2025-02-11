@@ -92,8 +92,6 @@ class ColQwen2ForRetrievalOutput(BaseModelOutputWithPast):
     Base class for ColQwen2 embeddings output.
 
     Args:
-        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
-            Language modeling loss (for next-token prediction).
         embeddings (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
             The embeddings of the model.
         past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
@@ -118,7 +116,6 @@ class ColQwen2ForRetrievalOutput(BaseModelOutputWithPast):
             image_hidden_states of the model produced by the vision encoder after projecting last hidden state.
     """
 
-    loss: Optional[torch.FloatTensor] = None
     embeddings: torch.Tensor = None
     past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
@@ -378,13 +375,14 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, ModelOutput]:
         """
-        Forward through the Qwen2VL backbone. Uses a custom forward method to fix an issue with the gradient flow when
-        training with multiple GPUs.
+        Forward through the Qwen2VL backbone.
+
+        Uses a custom forward method to fix an issue with the gradient flow when training with multiple GPUs. Code is
+        mostly copied from [`Qwen2VLForConditionalGeneration.forward`], excluding the code for video processing.
         """
         if inputs_embeds is None:
             inputs_embeds = self.vlm.model.embed_tokens(input_ids)
@@ -397,15 +395,6 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
                 )
                 image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
-            if pixel_values_videos is not None:
-                pixel_values_videos = pixel_values_videos.type(self.vlm.visual.get_dtype())
-                video_embeds = self.vlm.visual(pixel_values_videos, grid_thw=video_grid_thw)
-                video_mask = (
-                    (input_ids == self.config.vlm_config.video_token_id).unsqueeze(-1).expand_as(inputs_embeds)
-                )
-                video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
@@ -420,29 +409,32 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
-
         return outputs
 
     @add_start_docstrings_to_model_forward(COLQWEN2_FOR_RETRIEVAL_INPUT_DOCSTRING)
     @replace_return_docstrings(output_type=ColQwen2ForRetrievalOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        input_ids: torch.LongTensor,
-        pixel_values: torch.FloatTensor = None,
+        input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        use_cache: Optional[bool] = None,
-        *args,
-        **kwargs,
+        pixel_values: Optional[torch.Tensor] = None,
+        image_grid_thw: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, ColQwen2ForRetrievalOutput]:  # noqa: F821
         r"""
         Returns:
         ```"""
-        if "pixel_values" in kwargs:
-            kwargs["pixel_values"] = kwargs["pixel_values"].to(dtype=self.dtype)
+        if pixel_values is not None:
+            pixel_values = pixel_values.to(dtype=self.dtype)
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
 
         output_hidden_states = (
@@ -452,7 +444,7 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
 
         position_ids, rope_deltas = self.get_rope_index(
             input_ids=input_ids,
-            image_grid_thw=kwargs.get("image_grid_thw", None),
+            image_grid_thw=image_grid_thw,
             video_grid_thw=None,
             attention_mask=attention_mask,
         )
@@ -461,12 +453,15 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=True,
             return_dict=return_dict,
-            *args,
-            **kwargs,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+            cache_position=cache_position,
         )
 
         last_hidden_states = outputs[0]  # (batch_size, sequence_length, hidden_size)
@@ -474,18 +469,15 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
 
         # L2 normalization
         embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)  # (batch_size, sequence_length, dim)
-
         embeddings = embeddings * attention_mask.unsqueeze(-1)  # (batch_size, sequence_length, dim)
 
-        loss = None
         if not return_dict:
             output = (embeddings,) + outputs[2:]
             output[2] = output[2] if output_hidden_states is not None else None
             output[-1] = (outputs.image_hidden_states if pixel_values is not None else None,)
-            return (loss,) + output if loss is not None else output
+            return output
 
         return ColQwen2ForRetrievalOutput(
-            loss=loss,
             embeddings=embeddings,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states if output_hidden_states else None,

@@ -19,8 +19,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
-from torch.nn import CrossEntropyLoss
-
 from transformers.models.qwen2_vl.processing_qwen2_vl import Qwen2VLProcessor
 
 from ...cache_utils import Cache
@@ -598,8 +596,6 @@ class ColQwen2ForRetrievalOutput(BaseModelOutputWithPast):
     Base class for ColQwen2 embeddings output.
 
     Args:
-        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
-            Language modeling loss (for next-token prediction).
         embeddings (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
             The embeddings of the model.
         past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
@@ -624,7 +620,6 @@ class ColQwen2ForRetrievalOutput(BaseModelOutputWithPast):
             image_hidden_states of the model produced by the vision encoder after projecting last hidden state.
     """
 
-    loss: Optional[torch.FloatTensor] = None
     embeddings: torch.Tensor = None
     past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
@@ -879,21 +874,19 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, ModelOutput]:
         """
-        Forward through the Qwen2VL backbone. Uses a custom forward method to fix an issue with the gradient flow when
-        training with multiple GPUs.
+        Forward through the Qwen2VL backbone.
+
+        Uses a custom forward method to fix an issue with the gradient flow when training with multiple GPUs. Code is
+        mostly copied from [`Qwen2VLForConditionalGeneration.forward`], excluding the code for video processing.
         """
         if inputs_embeds is None:
             inputs_embeds = self.vlm.model.embed_tokens(input_ids)
@@ -906,15 +899,6 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
                 )
                 image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
-            if pixel_values_videos is not None:
-                pixel_values_videos = pixel_values_videos.type(self.vlm.visual.get_dtype())
-                video_embeds = self.vlm.visual(pixel_values_videos, grid_thw=video_grid_thw)
-                video_mask = (
-                    (input_ids == self.config.vlm_config.video_token_id).unsqueeze(-1).expand_as(inputs_embeds)
-                )
-                video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
@@ -942,16 +926,12 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, ColQwen2ForRetrievalOutput]:  # noqa: F821
         r"""
@@ -979,16 +959,12 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            labels=labels,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=True,
             return_dict=return_dict,
             pixel_values=pixel_values,
-            pixel_values_videos=pixel_values_videos,
             image_grid_thw=image_grid_thw,
-            video_grid_thw=video_grid_thw,
-            rope_deltas=rope_deltas,
             cache_position=cache_position,
         )
 
@@ -997,32 +973,15 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
 
         # L2 normalization
         embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)  # (batch_size, sequence_length, dim)
-
         embeddings = embeddings * attention_mask.unsqueeze(-1)  # (batch_size, sequence_length, dim)
-
-        loss = None
-        if labels is not None:
-            # Upcast to float if we need to compute the loss to avoid potential precision issues
-            logits = logits.float()
-            # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_labels = shift_labels.view(-1)
-            # Enable model parallelism
-            shift_labels = shift_labels.to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
 
         if not return_dict:
             output = (embeddings,) + outputs[2:]
             output[2] = output[2] if output_hidden_states is not None else None
             output[-1] = (outputs.image_hidden_states if pixel_values is not None else None,)
-            return (loss,) + output if loss is not None else output
+            return output
 
         return ColQwen2ForRetrievalOutput(
-            loss=loss,
             embeddings=embeddings,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states if output_hidden_states else None,
