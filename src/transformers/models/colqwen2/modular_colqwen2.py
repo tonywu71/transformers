@@ -889,7 +889,7 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         video_grid_thw: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, ModelOutput]:
         """
-        Forward through the Qwen2VL VLM backbone. Uses a custom forward method to fix gradient flow when using
+        Forward through the Qwen2VL backbone. Uses a custom forward method to fix an issue with the gradient flow when
         training with multiple GPUs.
         """
         if inputs_embeds is None:
@@ -945,7 +945,6 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         **kwargs,
     ) -> Union[Tuple, ColQwen2ForRetrievalOutput]:  # noqa: F821
         r"""
-        # TODO: Update docstring
         Returns:
         ```"""
         if "pixel_values" in kwargs:
