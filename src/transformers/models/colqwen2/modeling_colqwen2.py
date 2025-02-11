@@ -136,8 +136,8 @@ COLQWEN2_FOR_RETRIEVAL_INPUT_DOCSTRING = r"""
             [What are input IDs?](../glossary#input-ids)
         pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, image_size, image_size)):
             The tensors corresponding to the input images. Pixel values can be obtained using
-            [`AutoImageProcessor`]. See [`SiglipImageProcessor.__call__`] for details ([]`PaliGemmaProcessor`] uses
-            [`SiglipImageProcessor`] for processing images). If none, ColQwen2 will only process text (query embeddings).
+            [`AutoImageProcessor`]. See [`Qwen2VLImageProcessor.__call__`] for details. If none,
+            ColQwen2 will only process text (query embeddings).
         attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
             Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
             - 1 for tokens that are **not masked**,
@@ -167,21 +167,16 @@ COLQWEN2_FOR_RETRIEVAL_INPUT_DOCSTRING = r"""
 
 @add_start_docstrings(
     """
-    # TODO: Update
-    ColQwen2 leverages Vision Language Models (VLMs) to construct efficient multi-vector embeddings in the visual space for document retrieval.
-    By feeding the ViT output patches from Qwen2-VL to a linear projection, we create a multi-vector representation of documents. The model
-    is trained to maximize the similarity between these document embeddings and the query embeddings, following the ColBERT method.
+    Following the ColPali approach, ColQwen2 leverages VLMs to construct efficient multi-vector embeddings directly
+    from document images (“screenshots”) for document retrieval. The model is trained to maximize the similarity
+    between these document embeddings and the corresponding query embeddings, using the late interaction method
+    introduced in ColBERT.
 
-    Using ColQwen2 removes the need for potentially complex and brittle layout recognition and OCR pipelines with a single model that can take into account
-    both the textual and visual content (layout, charts, ...) of a document.
+    Using ColQwen2 removes the need for potentially complex and brittle layout recognition and OCR pipelines with
+    a single model that can take into account both the textual and visual content (layout, charts, ...) of a document.
 
-    ColQwen2 is part of the ColVision model family, which was introduced with ColPali in the following paper: [*ColPali: Efficient Document Retrieval with
-    Vision Language Models*](https://arxiv.org/abs/2407.01449).
-
-    Resources:
-    - A blog post detailing ColPali, a vision retrieval model, can be found [here](https://huggingface.co/blog/manu/colpali). 📝
-    - The code for using and training the original ColQwen2 model and for the `colpali-engine` package can be found [here](https://github.com/illuin-tech/colpali). 🌎
-    - Cookbooks for learning to use the Hf version of ColQwen2, fine-tuning, and similarity maps generation can be found [here](https://github.com/tonywu71/colpali-cookbooks). 📚
+    ColQwen2 is part of the ColVision model family, which was introduced with ColPali in the following paper:
+    [*ColPali: Efficient Document Retrieval with Vision Language Models*](https://arxiv.org/abs/2407.01449).
     """
 )
 class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):

@@ -89,9 +89,9 @@ class ColQwen2Processor(ProcessorMixin):
     for more information.
 
     Args:
-        image_processor ([`SiglipImageProcessor`], *optional*):
+        image_processor ([`Qwen2VLImageProcessor`], *optional*):
             The image processor is a required input.
-        tokenizer ([`LlamaTokenizerFast`], *optional*):
+        tokenizer ([`Qwen2TokenizerFast`], *optional*):
             The tokenizer is a required input.
         chat_template (`str`, *optional*): A Jinja template which will be used to convert lists of messages
             in a chat into a tokenizable string.
@@ -136,16 +136,14 @@ class ColQwen2Processor(ProcessorMixin):
         **kwargs: Unpack[ColQwen2ProcessorKwargs],
     ) -> BatchFeature:
         """
-        # TODO: Validate docstring
-
-        Main method to prepare for the model either (1) one or several texts, either (2) one or several image(s). This method is custom
+        Main method to prepare for the model either (1) one or several texts, either (2) one or several image(s). This method is a custom
         wrapper around the Qwen2VLProcessor's [`~Qwen2VLProcessor.__call__`] method adapted for the ColQwen2 model. It cannot process
         both text and images at the same time.
 
-        When preparing the the text(s), this method forwards the `text` and `kwargs` arguments to LlamaTokenizerFast's
-        [`~LlamaTokenizerFast.__call__`].
-        When preparing the the image(s), this method forwards the `images` and `kwargs` arguments to SiglipImageProcessor's
-        [`~SiglipImageProcessor.__call__`].
+        When preparing the the text(s), this method forwards the `text` and `kwargs` arguments to Qwen2TokenizerFast's
+        [`~Qwen2TokenizerFast.__call__`].
+        When preparing the the image(s), this method forwards the `images` and `kwargs` arguments to Qwen2VLImageProcessor's
+        [`~Qwen2VLImageProcessor.__call__`].
         Please refer to the doctsring of the above two methods for more information.
 
         Args:
@@ -380,7 +378,7 @@ class ColQwen2Processor(ProcessorMixin):
         Prepare for the model one or several image(s). This method is a wrapper around the `__call__` method of the ColQwen2Processor's
         [`ColQwen2Processor.__call__`].
 
-        This method forwards the `images` and `kwargs` arguments to SiglipImageProcessor's [`~SiglipImageProcessor.__call__`].
+        This method forwards the `images` and `kwargs` arguments to Qwen2VLImageProcessor's [`~Qwen2VLImageProcessor.__call__`].
 
         Args:
             images (`PIL.Image.Image`, `np.ndarray`, `torch.Tensor`, `List[PIL.Image.Image]`, `List[np.ndarray]`, `List[torch.Tensor]`):
@@ -415,7 +413,7 @@ class ColQwen2Processor(ProcessorMixin):
         Prepare for the model one or several texts. This method is a wrapper around the `__call__` method of the ColQwen2Processor's
         [`ColQwen2Processor.__call__`].
 
-        This method forwards the `text` and `kwargs` arguments to LlamaTokenizerFast's [`~LlamaTokenizerFast.__call__`].
+        This method forwards the `text` and `kwargs` arguments to Qwen2TokenizerFast's [`~Qwen2TokenizerFast.__call__`].
 
         Args:
             text (`str`, `List[str]`, `List[List[str]]`):

@@ -97,7 +97,7 @@ class ColPaliProcessor(PaliGemmaProcessor):
         **kwargs: Unpack[ColPaliProcessorKwargs],
     ) -> BatchFeature:
         """
-        Main method to prepare for the model either (1) one or several texts, either (2) one or several image(s). This method is custom
+        Main method to prepare for the model either (1) one or several texts, either (2) one or several image(s). This method is a custom
         wrapper around the PaliGemmaProcessor's [`~PaliGemmaProcessor.__call__`] method adapted for the ColPali model. It cannot process
         both text and images at the same time.
 

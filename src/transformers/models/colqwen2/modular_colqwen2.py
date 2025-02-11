@@ -77,12 +77,7 @@ class ColQwen2Config(PretrainedConfig):
     r"""
     Configuration class to store the configuration of a [`ColQ2en2ForRetrieval`]. It is used to instantiate an instance
     of `ColQwen2ForRetrieval` according to the specified arguments, defining the model architecture following the methodology
-    from the "ColQwen2: Efficient Document Retrieval with Vision Language Models" paper.
-
-    Creating a configuration with the default settings will result in a configuration where the VLM backbone is set to the
-    default PaliGemma configuration, i.e the one from [vidore/colpali-v1.2](https://huggingface.co/vidore/colpali-v1.2).
-
-    The ColQwen2 config is very similar to [`Qwen2VLConfig`], but with an extra attribute defining the embedding dimension.
+    from the "ColPali: Efficient Document Retrieval with Vision Language Models" paper.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -96,7 +91,7 @@ class ColQwen2Config(PretrainedConfig):
     Example:
 
     ```python
-    from transformers.models.colpali import ColQwen2Config, ColQwen2ForRetrieval
+    from transformers.models.colqwen2 import ColQwen2Config, ColQwen2ForRetrieval
 
     config = ColQwen2Config()
     model = ColQwen2ForRetrieval(config)
@@ -199,9 +194,9 @@ class ColQwen2Processor(Qwen2VLProcessor):
     for more information.
 
     Args:
-        image_processor ([`SiglipImageProcessor`], *optional*):
+        image_processor ([`Qwen2VLImageProcessor`], *optional*):
             The image processor is a required input.
-        tokenizer ([`LlamaTokenizerFast`], *optional*):
+        tokenizer ([`Qwen2TokenizerFast`], *optional*):
             The tokenizer is a required input.
         chat_template (`str`, *optional*): A Jinja template which will be used to convert lists of messages
             in a chat into a tokenizable string.
@@ -240,16 +235,14 @@ class ColQwen2Processor(Qwen2VLProcessor):
         **kwargs: Unpack[ColQwen2ProcessorKwargs],
     ) -> BatchFeature:
         """
-        # TODO: Validate docstring
-
-        Main method to prepare for the model either (1) one or several texts, either (2) one or several image(s). This method is custom
+        Main method to prepare for the model either (1) one or several texts, either (2) one or several image(s). This method is a custom
         wrapper around the Qwen2VLProcessor's [`~Qwen2VLProcessor.__call__`] method adapted for the ColQwen2 model. It cannot process
         both text and images at the same time.
 
-        When preparing the the text(s), this method forwards the `text` and `kwargs` arguments to LlamaTokenizerFast's
-        [`~LlamaTokenizerFast.__call__`].
-        When preparing the the image(s), this method forwards the `images` and `kwargs` arguments to SiglipImageProcessor's
-        [`~SiglipImageProcessor.__call__`].
+        When preparing the the text(s), this method forwards the `text` and `kwargs` arguments to Qwen2TokenizerFast's
+        [`~Qwen2TokenizerFast.__call__`].
+        When preparing the the image(s), this method forwards the `images` and `kwargs` arguments to Qwen2VLImageProcessor's
+        [`~Qwen2VLImageProcessor.__call__`].
         Please refer to the doctsring of the above two methods for more information.
 
         Args:
@@ -448,7 +441,7 @@ class ColQwen2Processor(Qwen2VLProcessor):
         Prepare for the model one or several image(s). This method is a wrapper around the `__call__` method of the ColQwen2Processor's
         [`ColQwen2Processor.__call__`].
 
-        This method forwards the `images` and `kwargs` arguments to SiglipImageProcessor's [`~SiglipImageProcessor.__call__`].
+        This method forwards the `images` and `kwargs` arguments to Qwen2VLImageProcessor's [`~Qwen2VLImageProcessor.__call__`].
 
         Args:
             images (`PIL.Image.Image`, `np.ndarray`, `torch.Tensor`, `List[PIL.Image.Image]`, `List[np.ndarray]`, `List[torch.Tensor]`):
@@ -483,7 +476,7 @@ class ColQwen2Processor(Qwen2VLProcessor):
         Prepare for the model one or several texts. This method is a wrapper around the `__call__` method of the ColQwen2Processor's
         [`ColQwen2Processor.__call__`].
 
-        This method forwards the `text` and `kwargs` arguments to LlamaTokenizerFast's [`~LlamaTokenizerFast.__call__`].
+        This method forwards the `text` and `kwargs` arguments to Qwen2TokenizerFast's [`~Qwen2TokenizerFast.__call__`].
 
         Args:
             text (`str`, `List[str]`, `List[List[str]]`):
@@ -649,8 +642,8 @@ COLQWEN2_FOR_RETRIEVAL_INPUT_DOCSTRING = r"""
             [What are input IDs?](../glossary#input-ids)
         pixel_values (`torch.FloatTensor` of shape `(batch_size, num_channels, image_size, image_size)):
             The tensors corresponding to the input images. Pixel values can be obtained using
-            [`AutoImageProcessor`]. See [`SiglipImageProcessor.__call__`] for details ([]`PaliGemmaProcessor`] uses
-            [`SiglipImageProcessor`] for processing images). If none, ColQwen2 will only process text (query embeddings).
+            [`AutoImageProcessor`]. See [`Qwen2VLImageProcessor.__call__`] for details. If none,
+            ColQwen2 will only process text (query embeddings).
         attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
             Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
             - 1 for tokens that are **not masked**,
@@ -680,21 +673,16 @@ COLQWEN2_FOR_RETRIEVAL_INPUT_DOCSTRING = r"""
 
 @add_start_docstrings(
     """
-    # TODO: Update
-    ColQwen2 leverages Vision Language Models (VLMs) to construct efficient multi-vector embeddings in the visual space for document retrieval.
-    By feeding the ViT output patches from Qwen2-VL to a linear projection, we create a multi-vector representation of documents. The model
-    is trained to maximize the similarity between these document embeddings and the query embeddings, following the ColBERT method.
+    Following the ColPali approach, ColQwen2 leverages VLMs to construct efficient multi-vector embeddings directly
+    from document images (“screenshots”) for document retrieval. The model is trained to maximize the similarity
+    between these document embeddings and the corresponding query embeddings, using the late interaction method
+    introduced in ColBERT.
 
-    Using ColQwen2 removes the need for potentially complex and brittle layout recognition and OCR pipelines with a single model that can take into account
-    both the textual and visual content (layout, charts, ...) of a document.
+    Using ColQwen2 removes the need for potentially complex and brittle layout recognition and OCR pipelines with
+    a single model that can take into account both the textual and visual content (layout, charts, ...) of a document.
 
-    ColQwen2 is part of the ColVision model family, which was introduced with ColPali in the following paper: [*ColPali: Efficient Document Retrieval with
-    Vision Language Models*](https://arxiv.org/abs/2407.01449).
-
-    Resources:
-    - A blog post detailing ColPali, a vision retrieval model, can be found [here](https://huggingface.co/blog/manu/colpali). 📝
-    - The code for using and training the original ColQwen2 model and for the `colpali-engine` package can be found [here](https://github.com/illuin-tech/colpali). 🌎
-    - Cookbooks for learning to use the Hf version of ColQwen2, fine-tuning, and similarity maps generation can be found [here](https://github.com/tonywu71/colpali-cookbooks). 📚
+    ColQwen2 is part of the ColVision model family, which was introduced with ColPali in the following paper:
+    [*ColPali: Efficient Document Retrieval with Vision Language Models*](https://arxiv.org/abs/2407.01449).
     """
 )
 class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):

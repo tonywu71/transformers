@@ -159,13 +159,16 @@ COLPALI_FOR_RETRIEVAL_INPUT_DOCSTRING = r"""
 
 @add_start_docstrings(
     """
-    In our proposed ColPali approach, we leverage VLMs to construct efficient multi-vector embeddings directly
-    from document images (“screenshots”) for document retrieval. We train the model to maximize the similarity
+    The ColPali architecture leverages VLMs to construct efficient multi-vector embeddings directly
+    from document images (“screenshots”) for document retrieval. The model is trained to maximize the similarity
     between these document embeddings and the corresponding query embeddings, using the late interaction method
     introduced in ColBERT.
 
     Using ColPali removes the need for potentially complex and brittle layout recognition and OCR pipelines with a
     single model that can take into account both the textual and visual content (layout, charts, etc.) of a document.
+
+    ColPali is part of the ColVision model family, which was first introduced in the following paper:
+    [*ColPali: Efficient Document Retrieval with Vision Language Models*](https://arxiv.org/abs/2407.01449).
     """
 )
 class ColPaliForRetrieval(ColPaliPreTrainedModel):

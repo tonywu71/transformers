@@ -35,12 +35,7 @@ class ColQwen2Config(PretrainedConfig):
     r"""
     Configuration class to store the configuration of a [`ColQ2en2ForRetrieval`]. It is used to instantiate an instance
     of `ColQwen2ForRetrieval` according to the specified arguments, defining the model architecture following the methodology
-    from the "ColQwen2: Efficient Document Retrieval with Vision Language Models" paper.
-
-    Creating a configuration with the default settings will result in a configuration where the VLM backbone is set to the
-    default PaliGemma configuration, i.e the one from [vidore/colpali-v1.2](https://huggingface.co/vidore/colpali-v1.2).
-
-    The ColQwen2 config is very similar to [`Qwen2VLConfig`], but with an extra attribute defining the embedding dimension.
+    from the "ColPali: Efficient Document Retrieval with Vision Language Models" paper.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -54,7 +49,7 @@ class ColQwen2Config(PretrainedConfig):
     Example:
 
     ```python
-    from transformers.models.colpali import ColQwen2Config, ColQwen2ForRetrieval
+    from transformers.models.colqwen2 import ColQwen2Config, ColQwen2ForRetrieval
 
     config = ColQwen2Config()
     model = ColQwen2ForRetrieval(config)

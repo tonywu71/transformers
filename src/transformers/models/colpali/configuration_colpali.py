@@ -33,8 +33,6 @@ class ColPaliConfig(PretrainedConfig):
     Creating a configuration with the default settings will result in a configuration where the VLM backbone is set to the
     default PaliGemma configuration, i.e the one from [vidore/colpali-v1.2](https://huggingface.co/vidore/colpali-v1.2).
 
-    The ColPali config is very similar to [`PaligemmaConfig`], but with an extra attribute defining the embedding dimension.
-
     Note that contrarily to what the class name suggests (actually the name refers to the ColPali **methodology**), you can
     use a different VLM backbone model than PaliGemma by passing the corresponding VLM configuration to the class constructor.
 
