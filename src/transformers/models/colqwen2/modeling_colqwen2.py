@@ -399,7 +399,7 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
 
-        outputs = self.vlm(
+        outputs = self.vlm.model(
             input_ids=None,
             position_ids=position_ids,
             attention_mask=attention_mask,
@@ -434,6 +434,14 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         r"""
         Returns:
         ```"""
+        # The following code is a hack to make sure the scatter in DDP is done correctly when training on multiple GPUs.
+        if pixel_values is not None and image_grid_thw is not None:
+            offsets = image_grid_thw[:, 1] * image_grid_thw[:, 2]
+            pixel_values = torch.cat(
+                [pv[:o] for pv, o in zip(pixel_values, offsets)],
+                dim=0,
+            )
+
         if pixel_values is not None:
             pixel_values = pixel_values.to(dtype=self.dtype)
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -456,10 +464,10 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
+            use_cache=False,
+            output_attentions=None,
             output_hidden_states=True,
-            return_dict=return_dict,
+            return_dict=True,
             pixel_values=pixel_values,
             image_grid_thw=image_grid_thw,
             cache_position=cache_position,
