@@ -96,5 +96,8 @@ class ColQwen2Config(PretrainedConfig):
         self.embedding_dim = embedding_dim
         super().__init__(**kwargs)
 
+    def get_text_config(self, decoder=False) -> PretrainedConfig:
+        return self.vlm_config
+
 
 __all__ = ["ColQwen2Config"]

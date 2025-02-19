@@ -138,6 +138,9 @@ class ColQwen2Config(PretrainedConfig):
         self.embedding_dim = embedding_dim
         super().__init__(**kwargs)
 
+    def get_text_config(self, decoder=False) -> PretrainedConfig:
+        return self.vlm_config
+
 
 class ColQwen2ProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {
@@ -1003,6 +1006,24 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
             attentions=outputs.attentions,
             image_hidden_states=outputs.image_hidden_states if pixel_values is not None else None,
         )
+
+    def resize_token_embeddings(
+        self,
+        new_num_tokens: Optional[int] = None,
+        pad_to_multiple_of: Optional[int] = None,
+        mean_resizing: bool = True,
+    ) -> nn.Embedding:
+        model_embeds = self.vlm.resize_token_embeddings(
+            new_num_tokens=new_num_tokens,
+            pad_to_multiple_of=pad_to_multiple_of,
+            mean_resizing=mean_resizing,
+        )
+
+        self.config.vlm_config.vocab_size = model_embeds.num_embeddings
+        self.vlm.vocab_size = model_embeds.num_embeddings
+        self.vocab_size = model_embeds.num_embeddings
+
+        return model_embeds
 
 
 __all__ = [
