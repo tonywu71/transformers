@@ -310,7 +310,11 @@ class ColQwen2Processor(Qwen2VLProcessor):
                         index += 1
                     texts_doc[i] = texts_doc[i].replace("<|placeholder|>", self.image_token)
 
-            text_inputs = self.tokenizer(texts_doc, **output_kwargs["text_kwargs"])
+            text_inputs = self.tokenizer(
+                texts_doc,
+                return_token_type_ids=False,
+                **output_kwargs["text_kwargs"],
+            )
 
             return_data = BatchFeature(data={**text_inputs, **image_inputs})
 
@@ -925,6 +929,7 @@ class ColQwen2ForRetrieval(ColQwen2PreTrainedModel):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
+        labels: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,

@@ -211,7 +211,11 @@ class ColQwen2Processor(ProcessorMixin):
                         index += 1
                     texts_doc[i] = texts_doc[i].replace("<|placeholder|>", self.image_token)
 
-            text_inputs = self.tokenizer(texts_doc, **output_kwargs["text_kwargs"])
+            text_inputs = self.tokenizer(
+                texts_doc,
+                return_token_type_ids=False,
+                **output_kwargs["text_kwargs"],
+            )
 
             return_data = BatchFeature(data={**text_inputs, **image_inputs})
 
