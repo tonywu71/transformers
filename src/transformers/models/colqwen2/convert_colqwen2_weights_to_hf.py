@@ -26,8 +26,8 @@ NOTE: This script was originally run using `torch==2.5.1` and with:
 python src/transformers/models/colqwen2/convert_colqwen2_weights_to_hf.py \
     --model_id vidore/colqwen2-v1.0-merged \
     --revision eeccbae1d44bdcb0c83b1788127a2b2cad7d718e \
-    --original_vlm_name_or_path Qwen/Qwen2-VL-2B \
-    --output_dir vidore/colqwen2-1.0-hf-internal \
+    --original_vlm_name_or_path Qwen/Qwen2-VL-2B-Instruct \
+    --output_dir vidore/colqwen2-v1.0-hf-internal \
     --push_to_hub
 ```
 """
@@ -54,19 +54,6 @@ logger = logging.get_logger(__name__)
 ORIGINAL_DTYPE = torch.bfloat16
 
 
-def rename_state_dict_keys(state_dict: Dict[str, Any]) -> Dict[str, Any]:
-    new_state_dict: Dict[str, Any] = {}
-    for key, value in state_dict.items():
-        if key.startswith("custom_text_proj"):
-            new_key = key.replace("custom_text_proj", "embedding_proj_layer")
-        else:
-            # The original ColQwen2 inherits from Qwen2VL, so we simply need to add the `vlm.` prefix
-            # to all remaining keys.
-            new_key = "vlm." + key
-        new_state_dict[new_key] = value
-    return new_state_dict
-
-
 def load_original_state_dict(model_id: str, revision: Optional[str] = None) -> Dict[str, torch.Tensor]:
     directory_path = snapshot_download(
         repo_id=model_id,
@@ -81,7 +68,24 @@ def load_original_state_dict(model_id: str, revision: Optional[str] = None) -> D
                 for key in f.keys():
                     original_state_dict[key] = f.get_tensor(key)
 
+    # Some weights are tied, so `lm.head`` is not saved. Let's clone to load state dict.
+    if "lm_head.weight" not in original_state_dict:
+        original_state_dict["lm_head.weight"] = original_state_dict["model.embed_tokens.weight"].clone()
+
     return original_state_dict
+
+
+def rename_state_dict_keys(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    new_state_dict: Dict[str, Any] = {}
+    for key, value in state_dict.items():
+        if key.startswith("custom_text_proj"):
+            new_key = key.replace("custom_text_proj", "embedding_proj_layer")
+        else:
+            # The original ColQwen2 inherits from Qwen2VL, so we simply need to add the `vlm.` prefix
+            # to all remaining keys.
+            new_key = "vlm." + key
+        new_state_dict[new_key] = value
+    return new_state_dict
 
 
 @torch.no_grad()
@@ -133,7 +137,7 @@ def convert_colqwen2_weights_to_hf(
     model.load_state_dict(original_state_dict)
     print("Loaded original model weights")
 
-    # Sanity check: ensure all keys are the same
+    # # Sanity check: ensure all keys are the same
     state_dict_keys_old = set(original_state_dict.keys())
     state_dict_keys_new = set(model.state_dict().keys())
     disjoint_keys = state_dict_keys_old.symmetric_difference(state_dict_keys_new)
@@ -163,8 +167,8 @@ if __name__ == "__main__":
         python src/transformers/models/colqwen2/convert_colqwen2_weights_to_hf.py \
             --model_id vidore/colqwen2-v1.0-merged \
             --revision eeccbae1d44bdcb0c83b1788127a2b2cad7d718e \
-            --original_vlm_name_or_path Qwen/Qwen2-VL-2B \
-            --output_dir vidore/colqwen2-1.0-hf-internal \
+            --original_vlm_name_or_path Qwen/Qwen2-VL-2B-Instruct \
+            --output_dir vidore/colqwen2-v1.0-hf-internal \
             --push_to_hub
         ```
         """
