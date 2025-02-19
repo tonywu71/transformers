@@ -16,60 +16,17 @@ rendered properly in your Markdown viewer.
 
 # ColQwen2
 
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
-# ColQwen2
-
 ## Overview
 
-The ColQwen2 model was proposed in [<INSERT PAPER NAME HERE>](<INSERT PAPER LINK HERE>) by <INSERT AUTHORS HERE>.
-<INSERT SHORT SUMMARY HERE>
+TODO: Write model card.
 
-The abstract from the paper is the following:
+## Resources
 
-*<INSERT PAPER ABSTRACT HERE>*
+TODO: ...
 
-Tips:
+## Usage
 
-<INSERT TIPS ABOUT MODEL HERE>
-
-This model was contributed by [INSERT YOUR HF USERNAME HERE](https://huggingface.co/<INSERT YOUR HF USERNAME HERE>).
-The original code can be found [here](<INSERT LINK TO GITHUB REPO HERE>).
-
+TODO: ...
 
 ## ColQwen2Config
 
@@ -84,12 +41,7 @@ The original code can be found [here](<INSERT LINK TO GITHUB REPO HERE>).
 
 [[autodoc]] ColQwen2Processor
 
-## ColQwen2Model
+## ColQwen2ForRetrieval
 
 [[autodoc]] ColQwen2Model
-    - forward
-
-## ColQwen2ForConditionalGeneration
-
-[[autodoc]] ColQwen2ForConditionalGeneration
     - forward
