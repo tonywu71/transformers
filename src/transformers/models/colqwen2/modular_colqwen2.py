@@ -14,15 +14,19 @@
 # limitations under the License.
 
 
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from transformers.models.colpali import ColPaliForRetrieval, ColPaliProcessor
+from transformers.models.colpali.modeling_colpali import ColPaliForRetrieval
+from transformers.models.colpali.processing_colpali import ColPaliProcessor
 
 from ...cache_utils import Cache
+from ...configuration_utils import PretrainedConfig
 from ...feature_extraction_utils import BatchFeature
 from ...image_utils import ImageInput, is_valid_image
 from ...modeling_utils import PreTrainedModel
+from ...models.auto import AutoModelForImageTextToText
 from ...processing_utils import (
     ProcessingKwargs,
     Unpack,
@@ -40,7 +44,7 @@ from ...utils import (
     logging,
     replace_return_docstrings,
 )
-from .configuration_colqwen2 import ColQwen2Config
+from ..auto import CONFIG_MAPPING
 
 
 if is_torch_available():
@@ -313,6 +317,70 @@ class ColQwen2Processor(ColPaliProcessor):
         return self.__call__(text=text, **kwargs)
 
 
+class ColQwen2Config(PretrainedConfig):
+    r"""
+    Configuration class to store the configuration of a [`ColQ2en2ForRetrieval`]. It is used to instantiate an instance
+    of `ColQwen2ForRetrieval` according to the specified arguments, defining the model architecture following the methodology
+    from the "ColPali: Efficient Document Retrieval with Vision Language Models" paper.
+
+    Instantiating a configuration with the defaults will yield a similar configuration to the vision encoder used by the pre-trained
+    ColQwen2-v1.0 model, e.g. [vidore/colqwen2-v1.0-hf](https://huggingface.co/vidore/colqwen2-v1.0-hf).
+
+    Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
+    documentation from [`PretrainedConfig`] for more information.
+
+    Args:
+        vlm_config (`PretrainedConfig`, *optional*):
+            Configuration of the VLM backbone model.
+        embedding_dim (`int`, *optional*, defaults to 128):
+            Dimension of the multi-vector embeddings produced by the model.
+
+    Example:
+
+    ```python
+    from transformers.models.colqwen2 import ColQwen2Config, ColQwen2ForRetrieval
+
+    config = ColQwen2Config()
+    model = ColQwen2ForRetrieval(config)
+    ```
+    """
+
+    model_type = "colqwen2"
+    sub_configs: Dict[str, Any] = {"vlm_config": PretrainedConfig}
+
+    def __init__(
+        self,
+        vlm_config=None,
+        embedding_dim: int = 128,
+        **kwargs,
+    ):
+        if vlm_config is None:
+            vlm_config = CONFIG_MAPPING["qwen2_vl"]()
+            logger.info(
+                "`vlm_config` is `None`. Initializing `vlm_config` with the `Qwen2VLConfig` with default values."
+            )
+        elif isinstance(vlm_config, dict):
+            vlm_config = deepcopy(vlm_config)
+            if "model_type" not in vlm_config:
+                raise KeyError(
+                    "The `model_type` key is missing in the `vlm_config` dictionary. Please provide the model type."
+                )
+            vlm_config = CONFIG_MAPPING[vlm_config["model_type"]](**vlm_config)
+        elif isinstance(vlm_config, PretrainedConfig):
+            vlm_config = vlm_config
+        else:
+            raise TypeError(
+                f"Invalid type for `vlm_config`. Expected `PretrainedConfig`, `dict`, or `None`, but got {type(vlm_config)}."
+            )
+
+        self.vlm_config = vlm_config
+        self.embedding_dim = embedding_dim
+        super().__init__(**kwargs)
+
+    def get_text_config(self, decoder=False) -> PretrainedConfig:
+        return self.vlm_config
+
+
 COLQWEN2_START_DOCSTRING = r"""
     This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
     library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
@@ -446,6 +514,37 @@ COLQWEN2_FOR_RETRIEVAL_INPUT_DOCSTRING = r"""
     """
 )
 class ColQwen2ForRetrieval(ColPaliForRetrieval):
+    def __init__(self, config: ColQwen2Config):
+        super().__init__(config)
+        self.config = config
+        self.vocab_size = config.vlm_config.vocab_size
+        self.vlm = AutoModelForImageTextToText.from_config(config.vlm_config)
+        self.embedding_dim = self.config.embedding_dim
+        self.embedding_proj_layer = nn.Linear(
+            self.config.vlm_config.hidden_size,
+            self.embedding_dim,
+        )
+        self._tied_weights_keys = ["vlm.model.embed_tokens.weight", "vlm.lm_head.weight"]
+        self.post_init()
+
+    def get_input_embeddings(self):
+        return self.vlm.model.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.vlm.model.embed_tokens = value
+
+    def get_output_embeddings(self):
+        return self.vlm.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.vlm.lm_head = new_embeddings
+
+    def set_decoder(self, decoder):
+        self.vlm.model = decoder
+
+    def get_decoder(self):
+        return self.vlm.model
+
     def inner_forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -593,4 +692,10 @@ class ColQwen2ForRetrieval(ColPaliForRetrieval):
         return model_embeds
 
 
-__all__ = ["ColQwen2Processor", "ColQwen2ForRetrieval"]
+__all__ = [
+    "ColQwen2Processor",
+    "ColQwen2ForRetrieval",
+    "ColQwen2PreTrainedModel",
+    "ColQwen2ForRetrievalOutput",
+    "ColQwen2Config",
+]
