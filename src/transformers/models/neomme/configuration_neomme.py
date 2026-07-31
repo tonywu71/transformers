@@ -237,6 +237,13 @@ class NeoMMEConfig(PreTrainedConfig):
         for layer_type in sorted(set(self.layer_types)):
             partial_rotary_factor = self.rope_parameters[layer_type].get("partial_rotary_factor", 1.0)
             rotary_dim = int(self.head_dim * partial_rotary_factor)
+            if not 0.0 < partial_rotary_factor <= 1.0:
+                # Above 1.0 the rotary slice is wider than the head and the failure lands inside attention as
+                # a shape error; at or below 0.0 there is no rotation at all and positions vanish silently.
+                raise ValueError(
+                    f"rope_parameters[{layer_type!r}]['partial_rotary_factor']={partial_rotary_factor} is "
+                    "outside (0.0, 1.0]: it is the fraction of each head's dims that carries position."
+                )
             if rotary_dim % 4:
                 raise ValueError(
                     f"rope_parameters[{layer_type!r}]['partial_rotary_factor']={partial_rotary_factor} rotates "

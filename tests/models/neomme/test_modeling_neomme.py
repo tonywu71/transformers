@@ -34,6 +34,7 @@ if is_torch_available():
     from transformers import initialization as init
     from transformers.models.neomme.modeling_neomme import (
         NeoMMEAttention,
+        NeoMMEEncoderLayer,
         NeoMMEMLP,
         NeoMMEPreTrainedModel,
         NeoMMEValueEmbeddings,
@@ -66,6 +67,11 @@ def _give_the_residual_branches_weight(test_case: unittest.TestCase) -> None:
             init.normal_(module.down_proj.weight, mean=0.0, std=module.down_proj.weight.shape[-1] ** -0.5)
         elif isinstance(module, NeoMMEValueEmbeddings):
             init.normal_(module.weight, mean=0.0, std=module.weight.shape[-1] ** -0.5)
+        elif isinstance(module, NeoMMEEncoderLayer):
+            # `lambdas` is born `[1.0, 0.0]`, so the `x0` shortcut it gates contributes exactly nothing and
+            # deleting the mix outright is invisible. Unlike the tensors above it is only PARTLY zero, which
+            # is why an is-it-all-zero refill misses it.
+            init.copy_(module.lambdas, torch.tensor([1.0, 0.5]))
 
     patcher = patch.object(NeoMMEPreTrainedModel, "_init_weights", initialize_with_live_residual_branches)
     patcher.start()
@@ -368,6 +374,13 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         # A factor that lands on a multiple of 4 is fine, on either layer type.
         config = NeoMMEConfig(head_dim=64, rope_parameters={"full_attention": {"partial_rotary_factor": 0.75}})
         self.assertEqual(config.rope_parameters["full_attention"]["partial_rotary_factor"], 0.75)
+
+    def test_a_partial_rotary_factor_outside_the_unit_interval_is_refused(self):
+        """Above 1.0 the rotary slice is wider than the head and attention dies on a shape error; at 0 there
+        is no rotation and positions vanish with no complaint."""
+        for factor in (2.0, 0.0, -0.25):
+            with self.assertRaisesRegex(ValueError, r"outside \(0.0, 1.0\]"):
+                NeoMMEConfig(rope_parameters={"sliding_attention": {"partial_rotary_factor": factor}})
 
     def test_config_round_trips_through_a_dict(self):
         config = self.model_tester.get_config()

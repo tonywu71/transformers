@@ -232,6 +232,24 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         with self.assertRaises(ValueError):  # nothing to pad to
             processor(text=["hello"], padding="max_length")
 
+    def test_a_tokenizer_declaring_padding_side_does_not_break_every_text_call(self):
+        """`_merge_kwargs` folds `tokenizer.init_kwargs` into the text kwargs, so refusing everything the
+        processor does not implement also refused the processor's own injection: any tokenizer copied from
+        Llama, Qwen or Mistral declares `padding_side` and made every text call raise. Only what the caller
+        passed is refusable."""
+        processor = self.get_processor()
+
+        for side in ("right", "left"):
+            processor.tokenizer.init_kwargs["padding_side"] = side
+            self.assertEqual(processor(text=["hello"], text_role="query")["input_ids"].shape[0], 1)
+
+        processor.tokenizer.init_kwargs.pop("padding_side", None)
+        # Asking for it explicitly still raises: this processor always right-pads.
+        with self.assertRaises(ValueError):
+            processor(text=["hello"], padding_side="left")
+        with self.assertRaises(ValueError):
+            processor(text=["hello"], text_kwargs={"padding_side": "left"})
+
     # --- NeoMME-specific behaviour ---
 
     def test_queries_get_the_marker_and_the_mask_expansion(self):

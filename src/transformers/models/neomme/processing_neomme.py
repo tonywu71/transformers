@@ -174,7 +174,9 @@ class NeoMMEProcessor(ProcessorMixin):
 
         if isinstance(text, str):
             text = [text]
-        text_kwargs = self._supported_text_kwargs(output_kwargs["text_kwargs"])
+        # What the caller actually named, flat or nested, as opposed to what `_merge_kwargs` injected.
+        requested = set(kwargs) | set(kwargs.get("text_kwargs", {}))
+        text_kwargs = self._supported_text_kwargs(output_kwargs["text_kwargs"], requested)
         if text_role == "query":
             return self.process_queries(text, **text_kwargs)
         if text_role == "document":
@@ -367,12 +369,18 @@ class NeoMMEProcessor(ProcessorMixin):
             )
         return longest
 
-    def _supported_text_kwargs(self, text_kwargs: dict[str, Any]) -> dict[str, Any]:
+    def _supported_text_kwargs(self, text_kwargs: dict[str, Any], requested: set[str]) -> dict[str, Any]:
         """Keep the text kwargs this processor implements, and refuse the rest rather than drop it.
 
         The marker convention is not negotiable: `add_special_tokens` or `stride` would silently corrupt the
         layout the model was trained on, and a kwarg that is quietly ignored is worse than one that raises.
         Truncation needs no flag — a `max_length` always truncates the content and never the markers.
+
+        Only `requested` — what the CALLER passed — is refusable. `_merge_kwargs` also folds in defaults from
+        `tokenizer.init_kwargs`, so a `tokenizer_config.json` carrying `padding_side` (as every tokenizer
+        copied from Llama, Qwen or Mistral does) would otherwise make every text call raise over a kwarg the
+        caller never wrote. An injected value is dropped instead: this processor always right-pads. An
+        explicit `padding_side=` from the caller still raises rather than being silently ignored.
         """
         supported = {
             name: text_kwargs[name] for name in ("max_length", "padding", "return_tensors") if name in text_kwargs
@@ -382,7 +390,7 @@ class NeoMMEProcessor(ProcessorMixin):
                 "truncation=False with a max_length is not supported: the marker and query-expansion layout "
                 "is fixed, so content past max_length is always dropped."
             )
-        unsupported = sorted(set(text_kwargs) - set(supported) - {"truncation"})
+        unsupported = sorted((set(text_kwargs) & requested) - set(supported) - {"truncation"})
         if unsupported:
             raise ValueError(f"NeoMMEProcessor does not implement these text kwargs: {unsupported}.")
         return supported

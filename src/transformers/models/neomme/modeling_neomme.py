@@ -113,8 +113,9 @@ def get_rotary_dim(config: NeoMMEConfig, layer_type: str) -> int:
 class NeoMMERotaryEmbedding(nn.Module):
     """Two-axis interleaved partial M-RoPE, with one frequency spectrum per layer type.
 
-    The two axes take disjoint halves of the inverse frequencies, so a row position can never alias a
-    column position. Global and sliding layers may run a different `rope_theta`, `partial_rotary_factor`
+    The two axes take disjoint interleaved strides of the inverse frequencies — even indices for rows, odd
+    for columns — so a row position can never alias a column position. Global and sliding layers may run a
+    different `rope_theta`, `partial_rotary_factor`
     and `rope_type` (Gemma-2/3-style local/global split), so the frequencies are built once per layer
     type, each through that type's own entry in `ROPE_INIT_FUNCTIONS`.
     """
@@ -170,6 +171,13 @@ class NeoMMERotaryEmbedding(nn.Module):
         """
         if position_ids.dim() == 2:
             position_ids = position_ids.unsqueeze(0).expand(2, -1, -1)
+        elif position_ids.dim() != 3 or position_ids.shape[0] != 2:
+            # Otherwise a `(3, B, L)` or `(B, L, 2)` tensor indexes as if it were axis-major and silently
+            # encodes the wrong positions, or dies inside the module on an opaque IndexError.
+            raise ValueError(
+                f"position_ids must be (2, batch_size, sequence_length) with the M-RoPE axis leading, or "
+                f"(batch_size, sequence_length) to use one axis for both; got {tuple(position_ids.shape)}."
+            )
         inv_freq = getattr(self, f"{layer_type}_inv_freq")  # (rotary_dim // 2,)
         attention_scaling = getattr(self, f"{layer_type}_attention_scaling")
         row_angles = (
