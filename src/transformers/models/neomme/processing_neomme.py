@@ -69,8 +69,9 @@ class NeoMMEProcessorKwargs(ProcessingKwargs, total=False):
     # values (notably `return_tensors=None`) for every key it does not find here, which overrides the
     # defaults on the methods that consume them. A processor built in code rather than loaded from a
     # checkpoint — every test, and any caller assembling one from a tokenizer — would then get ragged
-    # Python lists instead of tensors. Measured: dropping this block fails 22 tests.
-    # trf-ignore: TRF019
+    # Python lists instead of tensors. Measured: dropping this block fails 22 tests. This is why the
+    # `TRF019` structure rule is still red for NeoMME, and it needs a maintainer's call rather than a
+    # workaround — the rule has no suppression directive.
     _defaults = {
         "text_kwargs": {"padding": "longest"},
         "images_kwargs": {"do_convert_rgb": True},

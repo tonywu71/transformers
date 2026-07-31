@@ -151,9 +151,7 @@ class NeoMMEImageProcessor(TorchvisionBackend):
             # black canvas the reference implementation pastes onto.
             image, grid_height, grid_width = self._pad_to_patch_grid(image, patch_size)
 
-            image = self.rescale_and_normalize(
-                image, do_rescale, rescale_factor, do_normalize, image_mean, image_std
-            )
+            image = self.rescale_and_normalize(image, do_rescale, rescale_factor, do_normalize, image_mean, image_std)
 
             pixel_values.append(convert_image_to_patches(image, patch_size))
             image_grid_hw.append((grid_height, grid_width))
