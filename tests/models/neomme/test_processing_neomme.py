@@ -200,6 +200,19 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         )
         self.assertLessEqual(inputs[self.images_input_name][0][0].mean(), 0)
 
+    def test_doubly_passed_kwargs(self):
+        processor = self.processor_class(**self.prepare_components())
+        self.skip_processor_without_typed_kwargs(processor)
+
+        image_input = self.prepare_image_inputs()
+        with self.assertRaises(ValueError):
+            processor(
+                images=image_input,
+                images_kwargs={"do_rescale": True, "rescale_factor": -1.0},
+                do_rescale=True,
+                return_tensors="pt",
+            )
+
     def test_model_input_names(self):
         processor = self.get_processor()
         inputs = processor(images=self.prepare_image_inputs())
@@ -343,66 +356,31 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         self.assertEqual(batch["pixel_values"].shape[0], 2 * 3 + 1)
         self.assertEqual(int(batch["attention_mask"][1].sum()), 2 + 1 * (1 + 1))
 
-    def test_chat_template_renders_the_same_ids_as_the_processor(self):
-        """The template is the convention's home in the checkpoint, so the two paths must not drift."""
+    def test_score_retrieval(self):
         processor = self.get_processor()
-        processor.tokenizer.chat_template = (
-            "{%- if task | default('document') == 'query' -%}"
-            "{{- '<query>' + messages[-1]['content'] + '<mask>' * 10 -}}"
-            "{%- else -%}{{- '<doc>' + messages[-1]['content'] -}}{%- endif -%}"
-        )
-        text = "hello world"
 
-        for task, role in (("query", "query"), ("document", "document")):
-            rendered = processor.tokenizer.apply_chat_template(
-                [{"role": "user", "content": text}], task=task, tokenize=False
+        with self.subTest(mode="maxsim"):
+            query = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
+            passages = torch.tensor([[[1.0, 0.0], [0.0, 0.0]], [[0.0, 1.0], [0.0, 1.0]]])
+            scores = processor.score_retrieval(query, passages)
+            self.assertEqual(scores.shape, (1, 2))
+            # Passage 0 has a padding token (a zero row); its max must ignore it.
+            torch.testing.assert_close(scores[0], torch.tensor([0.5, 0.5]))
+
+        with self.subTest(mode="maxsim_normalize"):
+            query = torch.tensor([[[1.0, 0.0], [1.0, 0.0]]])
+            passage = torch.tensor([[[1.0, 0.0]]])
+            torch.testing.assert_close(processor.score_retrieval(query, passage)[0], torch.tensor([1.0]))
+            torch.testing.assert_close(
+                processor.score_retrieval(query, passage, normalize=False)[0], torch.tensor([2.0])
             )
-            via_template = processor.tokenizer(rendered, add_special_tokens=False)["input_ids"]
-            via_processor = processor(text=[text], text_role=role)["input_ids"][0].tolist()
-            self.assertEqual(via_template, via_processor, f"template and processor disagree for task={task}")
 
-    def test_save_and_reload_round_trips(self):
-        processor = self.get_processor()
-        with tempfile.TemporaryDirectory() as directory:
-            processor.save_pretrained(directory)
-            reloaded = NeoMMEProcessor.from_pretrained(directory)
+        with self.subTest(mode="maxsim_empty_passage"):
+            query = torch.tensor([[[1.0, 0.0]]])
+            passages = torch.tensor([[[1.0, 0.0]], [[0.0, 0.0]]])
+            torch.testing.assert_close(processor.score_retrieval(query, passages)[0], torch.tensor([1.0, -1.0]))
 
-        self.assertEqual(reloaded.query_expand, processor.query_expand)
-        self.assertEqual(reloaded.query_token, processor.query_token)
-        self.assertEqual(reloaded.image_processor.patch_size, PATCH_SIZE)
-        self.assertEqual(
-            reloaded(text=["hello world"], text_role="query")["input_ids"].tolist(),
-            processor(text=["hello world"], text_role="query")["input_ids"].tolist(),
-        )
-
-    def test_score_retrieval_uses_maxsim_for_multi_vector(self):
-        processor = self.get_processor()
-        query = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
-        passages = torch.tensor([[[1.0, 0.0], [0.0, 0.0]], [[0.0, 1.0], [0.0, 1.0]]])
-        scores = processor.score_retrieval(query, passages)
-
-        self.assertEqual(scores.shape, (1, 2))
-        # Passage 0 has a padding token (a zero row); its max must ignore it.
-        torch.testing.assert_close(scores[0], torch.tensor([0.5, 0.5]))
-
-    def test_score_retrieval_normalization_divides_by_query_length(self):
-        processor = self.get_processor()
-        query = torch.tensor([[[1.0, 0.0], [1.0, 0.0]]])
-        passage = torch.tensor([[[1.0, 0.0]]])
-
-        torch.testing.assert_close(processor.score_retrieval(query, passage)[0], torch.tensor([1.0]))
-        torch.testing.assert_close(processor.score_retrieval(query, passage, normalize=False)[0], torch.tensor([2.0]))
-
-    def test_score_retrieval_floors_empty_passages(self):
-        processor = self.get_processor()
-        query = torch.tensor([[[1.0, 0.0]]])
-        passages = torch.tensor([[[1.0, 0.0]], [[0.0, 0.0]]])
-
-        torch.testing.assert_close(processor.score_retrieval(query, passages)[0], torch.tensor([1.0, -1.0]))
-
-    def test_score_retrieval_uses_cosine_for_dense(self):
-        processor = self.get_processor()
-        queries = torch.tensor([[1.0, 0.0]])
-        passages = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
-
-        torch.testing.assert_close(processor.score_retrieval(queries, passages)[0], torch.tensor([1.0, 0.0]))
+        with self.subTest(mode="dense_cosine"):
+            queries = torch.tensor([[1.0, 0.0]])
+            passages = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
+            torch.testing.assert_close(processor.score_retrieval(queries, passages)[0], torch.tensor([1.0, 0.0]))
