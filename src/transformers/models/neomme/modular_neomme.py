@@ -563,8 +563,8 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
         image_mask = (
             (input_ids == self.config.image_token_id) & (previous_ids != self.config.document_token_id)
         ).unsqueeze(-1)
+
         # The placeholder count lives in tensor VALUES, which `fullgraph=True` refuses to guard on.
-        # Not redundant with `masked_scatter`: that rejects too few patches, never too many.
         if not is_torchdynamo_compiling():
             num_image_tokens = int(image_mask.sum())
             if num_image_tokens != pixel_values.shape[0]:
