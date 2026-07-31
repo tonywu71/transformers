@@ -180,6 +180,7 @@ class NeoMMEConfig(PreTrainedConfig):
             layer_params.setdefault("partial_rotary_factor", self.default_partial_rotary_factor[layer_type])
 
         self.standardize_rope_params()
+        self._validate_rotary_dims()
         return kwargs
 
     def _refuse_fixed_architecture(self, kwargs: dict) -> None:
@@ -224,6 +225,26 @@ class NeoMMEConfig(PreTrainedConfig):
                 f"which generates {expected} but got {self.layer_types}. Fix the stride, or pass "
                 "global_attn_every_n_layers=None to keep a hand-written pattern."
             )
+
+    def _validate_rotary_dims(self) -> None:
+        """Check every layer type rotates a multiple of 4 dims.
+
+        The two M-RoPE axes take alternating frequency pairs, so the rotating dims divide by 2 twice.
+        A factor that breaks that used to be rounded down inside the model, which produced a working
+        model with a narrower spectrum than the config advertised — unrecoverable once weights were
+        trained against it, and invisible in `config.json`.
+        """
+        for layer_type in sorted(set(self.layer_types)):
+            partial_rotary_factor = self.rope_parameters[layer_type].get("partial_rotary_factor", 1.0)
+            rotary_dim = int(self.head_dim * partial_rotary_factor)
+            if rotary_dim % 4:
+                raise ValueError(
+                    f"rope_parameters[{layer_type!r}]['partial_rotary_factor']={partial_rotary_factor} rotates "
+                    f"{rotary_dim} of head_dim={self.head_dim} dims, which is not a multiple of 4: the two "
+                    f"M-RoPE axes consume frequencies in alternating pairs. Nearest usable factors: "
+                    f"{(rotary_dim - rotary_dim % 4) / self.head_dim} or "
+                    f"{(rotary_dim + 4 - rotary_dim % 4) / self.head_dim}."
+                )
 
     @property
     def patch_dim(self) -> int:

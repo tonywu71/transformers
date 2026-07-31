@@ -23,6 +23,7 @@ from ... import initialization as init
 from ...masking_utils import create_bidirectional_mask, sliding_window_bidirectional_overlay
 from ...modeling_layers import GradientCheckpointingLayer
 from ...modeling_outputs import BaseModelOutput, MaskedLMOutput
+from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import ModelOutput, TransformersKwargs, auto_docstring, is_torchdynamo_compiling, logging
@@ -43,14 +44,15 @@ def parameter_free_rms_norm(hidden_states: torch.Tensor, eps: float) -> torch.Te
 def get_rotary_dim(config: NeoMMEConfig, layer_type: str) -> int:
     """How many of each head's dims carry position on `layer_type` layers; the rest are NoPE.
 
-    `partial_rotary_factor` of `head_dim` rotates, floored to a multiple of 4: rotating dims are
-    consumed in pairs, and the pairs alternate between the two M-RoPE axes, so the count has to
-    divide by 2 twice. At `head_dim=64` with factor `0.25`: 16 rotating dims -> 8 frequencies ->
-    4 per axis.
+    `partial_rotary_factor` of `head_dim` rotates, matching every `ROPE_INIT_FUNCTIONS` entry so a
+    scaled RoPE type spans the same dims as the default one. The count is a multiple of 4 (rotating
+    dims are consumed in pairs, and the pairs alternate between the two M-RoPE axes, so it has to
+    divide by 2 twice); `NeoMMEConfig` rejects a factor that breaks that rather than rounding it
+    down here, where a silently narrowed spectrum would be indistinguishable from the intended one.
+    At `head_dim=64` with factor `0.25`: 16 rotating dims -> 8 frequencies -> 4 per axis.
     """
     partial_rotary_factor = config.rope_parameters[layer_type].get("partial_rotary_factor", 1.0)
-    rotary_dim = int(config.head_dim * partial_rotary_factor)
-    return rotary_dim - rotary_dim % 4
+    return int(config.head_dim * partial_rotary_factor)
 
 
 def apply_interleaved_rotary_pos_emb(
@@ -162,31 +164,64 @@ class NeoMMERotaryEmbedding(nn.Module):
     """Two-axis interleaved partial M-RoPE, with one frequency spectrum per layer type.
 
     The two axes take disjoint halves of the inverse frequencies, so a row position can never alias a
-    column position. Global and sliding layers may run a different `rope_theta` and
-    `partial_rotary_factor` (Gemma-2/3-style local/global split), so one non-persistent `inv_freq` buffer
-    is registered per layer type.
+    column position. Global and sliding layers may run a different `rope_theta`, `partial_rotary_factor`
+    and `rope_type` (Gemma-2/3-style local/global split), so the frequencies are built once per layer
+    type, each through that type's own entry in `ROPE_INIT_FUNCTIONS`.
     """
 
     def __init__(self, config: NeoMMEConfig, device=None):
         super().__init__()
         self.config = config
         self.layer_types = sorted(set(config.layer_types))
-        self.rotary_dim = {layer_type: get_rotary_dim(config, layer_type) for layer_type in self.layer_types}
+        self.max_seq_len_cached = config.max_position_embeddings
+        self.original_max_seq_len = config.max_position_embeddings
+        self.rope_init_fns: dict[str, Callable[..., tuple[torch.Tensor, float]]] = {}
+        self.rope_type: dict[str, str] = {}
         for layer_type in self.layer_types:
-            inv_freq = self.compute_inv_freq(layer_type, device=device)
+            rope_type = config.rope_parameters[layer_type]["rope_type"]
+            self.rope_type[layer_type] = rope_type
+            self.rope_init_fns[layer_type] = (
+                self.compute_default_rope_parameters if rope_type == "default" else ROPE_INIT_FUNCTIONS[rope_type]
+            )
+            inv_freq, attention_scaling = self.rope_init_fns[layer_type](config, device=device, layer_type=layer_type)
             self.register_buffer(f"{layer_type}_inv_freq", inv_freq, persistent=False)
+            # `dynamic_rope_update` restores the unscaled spectrum from this copy when a sequence shrinks
+            # back inside the original context, so it must survive the buffer being overwritten.
+            self.register_buffer(f"{layer_type}_original_inv_freq", inv_freq.clone(), persistent=False)
+            setattr(self, f"{layer_type}_attention_scaling", attention_scaling)
 
-    def compute_inv_freq(self, layer_type: str, device=None) -> torch.Tensor:
-        rotary_dim = self.rotary_dim[layer_type]
-        theta = self.config.rope_parameters[layer_type]["rope_theta"]
-        return theta ** -(torch.arange(0, rotary_dim, 2, dtype=torch.float, device=device) / rotary_dim)
+    @staticmethod
+    def compute_default_rope_parameters(
+        config: NeoMMEConfig,
+        device: torch.device | None = None,
+        seq_len: int | None = None,
+        layer_type: str | None = None,
+    ) -> tuple[torch.Tensor, float]:
+        """Unscaled inverse frequencies for `layer_type`, plus the (unused) post-hoc cos/sin scaling.
+
+        `ROPE_INIT_FUNCTIONS` has no `"default"` entry, so every model brings its own. Written as
+        `theta ** -x` rather than the `1.0 / theta ** x` the scaled variants use: the two differ by one
+        ULP in fp32, and this is the form every released checkpoint's frequencies were built with.
+        """
+        rotary_dim = get_rotary_dim(config, layer_type)
+        theta = config.rope_parameters[layer_type]["rope_theta"]
+        inv_freq = theta ** -(torch.arange(0, rotary_dim, 2, dtype=torch.float, device=device) / rotary_dim)
+        return inv_freq, 1.0
 
     @torch.no_grad()
+    @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def forward(
-        self, hidden_states: torch.Tensor, position_ids: torch.LongTensor, layer_type: str
+        self, hidden_states: torch.Tensor, position_ids: torch.LongTensor, layer_type: str | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """`position_ids` is `(2, batch_size, seq_len)`: index 0 is the row axis, index 1 the column axis."""
+        """`position_ids` is `(2, batch_size, seq_len)`: index 0 is the row axis, index 1 the column axis.
+
+        A plain `(batch_size, seq_len)` tensor is expanded onto both axes, which is what text-only inputs
+        want and what a caller holding this module on its own (or a generic test) will pass.
+        """
+        if position_ids.dim() == 2:
+            position_ids = position_ids.unsqueeze(0).expand(2, -1, -1)
         inv_freq = getattr(self, f"{layer_type}_inv_freq")  # (rotary_dim // 2,)
+        attention_scaling = getattr(self, f"{layer_type}_attention_scaling")
         row_angles = (
             position_ids[0].float().unsqueeze(-1) * inv_freq[0::2]
         )  # (batch_size, sequence_length, rotary_dim // 4)
@@ -196,7 +231,7 @@ class NeoMMERotaryEmbedding(nn.Module):
         angles = torch.stack([row_angles, column_angles], dim=-1).flatten(
             -2
         )  # (batch_size, sequence_length, rotary_dim // 2)
-        return angles.cos(), angles.sin()
+        return angles.cos() * attention_scaling, angles.sin() * attention_scaling
 
 
 class NeoMMEAttention(nn.Module):
@@ -441,7 +476,9 @@ class NeoMMEPreTrainedModel(PreTrainedModel):
             init.normal_(module.embedding_proj_layer.weight, mean=0.0, std=std)
         elif isinstance(module, NeoMMERotaryEmbedding):
             for layer_type in module.layer_types:
-                init.copy_(getattr(module, f"{layer_type}_inv_freq"), module.compute_inv_freq(layer_type))
+                inv_freq, _ = module.rope_init_fns[layer_type](module.config, layer_type=layer_type)
+                init.copy_(getattr(module, f"{layer_type}_inv_freq"), inv_freq)
+                init.copy_(getattr(module, f"{layer_type}_original_inv_freq"), inv_freq)
         elif isinstance(module, (nn.LayerNorm, nn.RMSNorm)):
             init.ones_(module.weight)
             if getattr(module, "bias", None) is not None:
@@ -536,9 +573,8 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
 
         batch_size, seq_len = hidden_states.shape[:2]
         if position_ids is None:
+            # One axis: `NeoMMERotaryEmbedding` expands it onto both, which is what text-only inputs want.
             position_ids = torch.arange(seq_len, device=hidden_states.device).expand(batch_size, -1)
-        if position_ids.dim() == 2:  # (batch_size, sequence_length) -> (2, batch_size, sequence_length)
-            position_ids = position_ids.unsqueeze(0).expand(2, -1, -1)
 
         # `initial_hidden_states` is captured HERE — after the patch scatter and the first norm — and every
         # layer mixes it back in through its `lambdas`.

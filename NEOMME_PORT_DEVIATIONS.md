@@ -109,6 +109,30 @@ tokenizer state that nothing reads back.
 idiom) instead of the research repo's two separate module instances. The buffers are non-persistent,
 so no state-dict key is affected.
 
+Each layer type's frequencies come from its own `rope_parameters["rope_type"]`, resolved through
+`ROPE_INIT_FUNCTIONS` exactly as `Gemma4UnifiedTextRotaryEmbedding` does, so `rope_type="linear"`,
+`"dynamic"` and `"yarn"` all work rather than being silently ignored. Two consequences:
+
+- **`compute_default_rope_parameters` is written `theta ** -x`**, not the `1.0 / theta ** x` the scaled
+  variants use. `ROPE_INIT_FUNCTIONS` has no `"default"` entry, so every model brings its own, and this
+  is the form the research implementation
+  ([`modeling_neomme.py`](https://github.com/hcompai/neomme/blob/main/neomme/model/modeling_neomme.py))
+  built every released checkpoint's frequencies with. The two differ by one fp32 ULP; switching to
+  upstream's form would move cos/sin by 6.1e-5 at the end of a 16384 context, 61% of the conversion
+  parity gate's 1e-4 budget, for no behavioural gain.
+- **`test_model_rope_scaling_frequencies` is skipped** for that ULP. Its per-layer-type
+  `ntk_inv_freq <= original_inv_freq` check reads a layer type the test never forwards, so both sides
+  are init-time values from the two different expressions. The three
+  `test_model_rope_scaling_from_config` variants, which check that scaling changes the output, run.
+
+### 10b. A `partial_rotary_factor` that does not rotate a multiple of 4 dims is rejected
+
+The two M-RoPE axes consume frequencies in alternating pairs, so the rotating dims have to divide by 2
+twice. `get_rotary_dim` used to floor to a multiple of 4, which built a working model whose spectrum was
+narrower than its `config.json` advertised — at `head_dim=8` with the default factor of 0.25 it rotated
+**zero** dims, which is what the tiny test config was doing before this check existed. `NeoMMEConfig`
+now raises instead, and names the nearest usable factors.
+
 ### 11. Value embeddings are skipped on an `inputs_embeds`-only call
 
 The value-embedding table is a per-token lookup, so it needs `input_ids`. Calling the model with
@@ -133,6 +157,9 @@ inputs; passing the shared value-embedding tensor as a keyword argument made
   always-global last layer (same precedent as `Gemma3nTextModelTest`).
 - `NeoMMEForRetrieval` is tested in its own class with `is_training=False`, like the Col\* models: it
   returns embeddings, not a loss.
+- The tester runs `head_dim=16`, not the more usual 8: with the default `partial_rotary_factor` of 0.25 a
+  global layer needs 16 dims to rotate 4 (see #10b), which is also the smallest width that exercises both
+  M-RoPE axes.
 - `test_all_params_have_gradient = False`, because the common batch is text-only and the vision stem
   legitimately receives no gradient from it. `test_patch_stem_receives_gradients_from_images` covers
   the stem instead.
