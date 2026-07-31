@@ -166,7 +166,7 @@ class NeoMMERotaryEmbedding(nn.Module):
         return inv_freq, 1.0
 
     @torch.no_grad()
-    @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
+    @dynamic_rope_update
     def forward(
         self, hidden_states: torch.Tensor, position_ids: torch.LongTensor, layer_type: str | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -365,8 +365,7 @@ class NeoMMEAttentionPooler(nn.Module):
         pooled, _ = self.attn(
             query, hidden_states, hidden_states, key_padding_mask=~attention_mask, need_weights=False
         )
-        # An all-padding row masks every key, so softmax over all `-inf` is NaN. Overwrite rather than
-        # multiply (`0 * NaN == NaN`) so an empty document pools to a finite zero vector.
+        # All-padding rows: softmax is NaN; overwrite with 0 (0 * NaN stays NaN).
         pooled = pooled.masked_fill(~attention_mask.any(-1)[:, None, None], 0.0)
         return self.norm(pooled.mean(1))  # (batch_size, hidden_size)
 

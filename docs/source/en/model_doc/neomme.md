@@ -34,7 +34,8 @@ Architecturally it combines:
 - factorized (ALBERT-style) token embeddings, with the masked-language-modeling decode tied through the same
   two matrices, so it costs no extra parameters;
 - a sliding-window / global attention alternation where the **last layer is always global**, with two
-  different sliding-window widths and a Gemma-style local/global RoPE split;
+  different sliding-window widths and per-layer-type RoPE (full rotary + short theta on sliding layers,
+  partial rotary + long theta on global layers);
 - a two-axis interleaved partial M-RoPE: image patches carry `(row, column)` positions, text carries the
   same position on both axes, and the dims past `partial_rotary_factor` stay position-blind;
 - bidirectional grouped-query attention with parameter-free QK-norm, a sigmoid output gate and Exclusive

@@ -57,19 +57,11 @@ class NeoMMEConfig(PreTrainedConfig):
     """
 
     model_type = "neomme"
-    # Gemma-4-style local/global split: the sliding layers run a short-wavelength spectrum that fits
-    # inside their window, the global layers a long one.
+    # Per-layer-type RoPE: sliding layers rotate every head dim at short range; global layers rotate 25%
+    # at long range and leave the rest of each head unrotated for content matching.
     default_theta = {"full_attention": 1_000_000.0, "sliding_attention": 10_000.0}
-    # Global layers keep most head dims position-blind (NoPE) for content matching; sliding layers spend
-    # every dim on fine 2-axis position.
     default_partial_rotary_factor = {"full_attention": 0.25, "sliding_attention": 1.0}
     ignore_keys_at_rope_validation = {"partial_rotary_factor"}
-    # Research switches that are FIXED here: every value NeoMME was released with is the one the port
-    # implements, so the alternatives are unreachable rather than merely untested. They are still refused
-    # by name, because a research `config.json` carrying one would otherwise be read as if it agreed.
-    # `depth_scale` is the dangerous one: it changes no tensor shape, so a checkpoint trained without it
-    # would load clean and be quietly wrong.
-    fixed_architecture = {"use_xsa": True, "depth_scale": True, "patch_stem": "mlp", "cheap_mixer": "swa"}
 
     vocab_size: int = 131072
     embedding_rank: int = 256
@@ -101,7 +93,6 @@ class NeoMMEConfig(PreTrainedConfig):
     tie_word_embeddings: bool = True
 
     def __post_init__(self, **kwargs):
-        self._refuse_fixed_architecture(kwargs)
         if not 0 < self.sliding_window_short <= self.sliding_window_long:
             raise ValueError(
                 f"expected 0 < sliding_window_short <= sliding_window_long, got {self.sliding_window_short} "
@@ -132,15 +123,9 @@ class NeoMMEConfig(PreTrainedConfig):
 
     def convert_rope_params_to_dict(self, **kwargs):
         rope_scaling = kwargs.pop("rope_scaling", None)
-        # A flat `rope_theta` is the standard HF knob, so it overrides both per-layer-type defaults. Popping
-        # it keeps it out of `config.json`, where it would otherwise sit next to `rope_parameters` reading
-        # as authoritative while nothing ever consumed it.
         rope_theta = kwargs.pop("rope_theta", None)
         self.rope_parameters = self.rope_parameters if self.rope_parameters is not None else {}
 
-        # Only the layer types this model actually has: a homogeneous `layer_types` whose rope keys are a
-        # strict superset sends `standardize_rope_params` down its single-global-dict branch, which writes
-        # flat keys into `rope_parameters` and fails the annotation.
         for layer_type in set(self.layer_types):
             layer_params = self.rope_parameters.setdefault(layer_type, {})
             if rope_scaling is not None:
@@ -152,17 +137,6 @@ class NeoMMEConfig(PreTrainedConfig):
         self.standardize_rope_params()
         self._validate_rotary_dims()
         return kwargs
-
-    def _refuse_fixed_architecture(self, kwargs: dict) -> None:
-        """Reject unsupported research architecture kwargs."""
-        for name, supported in self.fixed_architecture.items():
-            if name in kwargs and kwargs[name] != supported:
-                raise ValueError(
-                    f"{name}={kwargs[name]!r} is not supported: the transformers port implements "
-                    f"{name}={supported!r} only, which is what every released NeoMME was trained with. "
-                    "Convert such a checkpoint in the research repo instead."
-                )
-            kwargs.pop(name, None)
 
     def _validate_layer_types(self) -> None:
         """Validate `layer_types` and its consistency with `global_attn_every_n_layers`."""

@@ -276,25 +276,6 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         config = NeoMMEConfig(num_hidden_layers=4, global_attn_every_n_layers=None, layer_types=pattern)
         self.assertEqual(config.layer_types, pattern)
 
-    def test_the_fixed_architecture_switches_are_refused_not_ignored(self):
-        """`use_xsa`, `depth_scale`, `patch_stem` and `cheap_mixer` are research ablation switches, and the
-        port implements exactly one value of each — the one every released NeoMME was trained with. A
-        config that names another must fail loudly: `depth_scale` in particular changes no tensor shape, so
-        a checkpoint trained without it would otherwise load clean and be quietly wrong."""
-        base = {"num_hidden_layers": 4, "global_attn_every_n_layers": 3}
-        for name, unsupported in (
-            ("use_xsa", False),
-            ("depth_scale", False),
-            ("patch_stem", "linear"),
-            ("cheap_mixer", "gdn"),
-        ):
-            with self.subTest(name=name), self.assertRaises(ValueError):
-                NeoMMEConfig(**base, **{name: unsupported})
-
-        # The released values are accepted, and leave no trace in `config.json`.
-        config = NeoMMEConfig(**base, use_xsa=True, depth_scale=True, patch_stem="mlp", cheap_mixer="swa")
-        self.assertEqual([key for key in NeoMMEConfig.fixed_architecture if key in config.to_dict()], [])
-
     def test_the_two_window_widths_are_validated(self):
         """One band width is two equal widths, not a magic `sliding_window_long = 0`. The research config
         uses zero for 'uniform', and a zero half-width here would mean a diagonal-only band."""
