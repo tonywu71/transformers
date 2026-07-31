@@ -245,13 +245,10 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         pass
 
     @unittest.skip(
-        reason="the per-layer-type `ntk_inv_freq <= original_inv_freq` check compares a layer type the test "
-        "never forwards, so both sides are init-time values: NeoMME's default RoPE is written `theta ** -x` "
-        "to stay bit-identical to the research implementation every checkpoint was trained with, and upstream's "
-        "dynamic init uses `1.0 / theta ** x`, which is 1 ULP larger on some frequencies. Adopting upstream's "
-        "form instead would shift cos/sin by 6.1e-5 at the end of the context, 61% of the conversion parity "
-        "budget, for no behavioural gain. The three `test_model_rope_scaling_from_config` variants, which check "
-        "that scaling actually changes the output, do run."
+        reason="its per-layer-type `ntk_inv_freq <= original_inv_freq` check reads a layer type the test never "
+        "forwards, so it compares two init-time values that differ by 1 ULP: NeoMME's default RoPE keeps the "
+        "research implementation's `theta ** -x`, upstream's dynamic init uses `1.0 / theta ** x`. See "
+        "`port_deviations.md` §10. The three `test_model_rope_scaling_from_config` variants do run."
     )
     def test_model_rope_scaling_frequencies(self):
         pass
@@ -598,107 +595,39 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
     # Parity is only ever gated in float32; bf16 drift is documented separately and never asserted on.
     model_dtype: ClassVar["torch.dtype"] = torch.float32 if is_torch_available() else None
 
-    def setUp(self):
-        self.processor = NeoMMEProcessor.from_pretrained(self.model_name)
-        self.model = (
-            NeoMMEForRetrieval.from_pretrained(self.model_name, dtype=self.model_dtype).to(torch_device).eval()
-        )
+    TEXT_QUERIES: ClassVar[list[str]] = [
+        "How many people live in the capital of France?",
+        "What colour is a ripe banana?",
+    ]
+    TEXT_DOCUMENTS: ClassVar[list[str]] = [
+        "Paris is the capital of France and has a population of about 2.1 million people.",
+        "Bananas start out green and turn yellow as they ripen.",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        """Load the checkpoint and the dataset once for the class: `setUp` runs per test method, so doing
+        this there pulled 250M parameters and the dataset four times to run four tests."""
+        cls.processor = NeoMMEProcessor.from_pretrained(cls.model_name)
+        cls.model = NeoMMEForRetrieval.from_pretrained(cls.model_name, dtype=cls.model_dtype)
+        cls.model = cls.model.to(torch_device).eval()
+        cls.dataset = load_dataset("hf-internal-testing/document-visual-retrieval-test", split="test")
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.model
+        del cls.processor
+        cleanup(torch_device, gc_collect=True)
 
     def tearDown(self):
         cleanup(torch_device, gc_collect=True)
 
-    def _run_image_document_retrieval(
-        self,
-        *,
-        head: str,
-        expected_scores: list[list[float]],
-        score_bounds: tuple[float, float] | None = None,
-    ) -> None:
-        """Shared image-document retrieval check against hf-internal-testing/document-visual-retrieval-test."""
-        dataset = load_dataset("hf-internal-testing/document-visual-retrieval-test", split="test")
-
-        batch_images = self.processor(images=dataset["image"][:]).to(torch_device)
-        batch_queries = self.processor(text=dataset["query"][:], text_role="query").to(torch_device)
-
-        model_kwargs = {"output_multivector": False} if head == "dense" else {"output_dense": False}
-        embedding_attr = "dense_embeddings" if head == "dense" else "multivector_embeddings"
-
-        with torch.inference_mode():
-            image_embeddings = getattr(self.model(**batch_images, **model_kwargs), embedding_attr)
-            query_embeddings = getattr(self.model(**batch_queries, **model_kwargs), embedding_attr)
-
-        if head == "dense":
-            self.assertEqual(image_embeddings.shape, (len(dataset), self.model.config.hidden_size))
-            torch.testing.assert_close(
-                image_embeddings.norm(dim=-1), torch.ones_like(image_embeddings[:, 0]), rtol=1e-3, atol=1e-3
-            )
-
-        scores = self.processor.score_retrieval(query_embeddings, image_embeddings)
-
-        self.assertEqual(scores.ndim, 2)
-        self.assertEqual(scores.shape, (len(dataset), len(dataset)))
-        self.assertTrue((scores.argmax(dim=1) == torch.arange(len(dataset), device=scores.device)).all())
-        if score_bounds is not None:
-            low, high = score_bounds
-            self.assertTrue(((scores >= low) & (scores <= high)).all())
-
-        torch.testing.assert_close(
-            scores,
-            torch.tensor(expected_scores, dtype=scores.dtype),
-            rtol=1e-3,
-            atol=1e-3,
-        )
-
-    def _run_text_document_retrieval(
-        self,
-        *,
-        head: str,
-        expected_scores: list[list[float]],
-        score_bounds: tuple[float, float] | None = None,
-    ) -> None:
-        """Shared text-document retrieval: queries vs `<doc>` passages on the text path."""
-        queries = ["How many people live in the capital of France?", "What colour is a ripe banana?"]
-        documents = [
-            "Paris is the capital of France and has a population of about 2.1 million people.",
-            "Bananas start out green and turn yellow as they ripen.",
-        ]
-
-        batch_queries = self.processor(text=queries, text_role="query").to(torch_device)
-        batch_documents = self.processor(text=documents, text_role="document").to(torch_device)
-
-        model_kwargs = {"output_multivector": False} if head == "dense" else {"output_dense": False}
-        embedding_attr = "dense_embeddings" if head == "dense" else "multivector_embeddings"
-
-        with torch.inference_mode():
-            query_embeddings = getattr(self.model(**batch_queries, **model_kwargs), embedding_attr)
-            document_embeddings = getattr(self.model(**batch_documents, **model_kwargs), embedding_attr)
-
-        if head == "dense":
-            torch.testing.assert_close(
-                document_embeddings.norm(dim=-1), torch.ones_like(document_embeddings[:, 0]), rtol=1e-3, atol=1e-3
-            )
-
-        scores = self.processor.score_retrieval(query_embeddings, document_embeddings)
-
-        self.assertEqual(scores.shape, (len(documents), len(documents)))
-        self.assertTrue((scores.argmax(dim=1) == torch.arange(len(documents), device=scores.device)).all())
-        if score_bounds is not None:
-            low, high = score_bounds
-            self.assertTrue(((scores >= low) & (scores <= high)).all())
-
-        torch.testing.assert_close(
-            scores,
-            torch.tensor(expected_scores, dtype=scores.dtype),
-            rtol=1e-3,
-            atol=1e-3,
-        )
-
     def test_multivector_head_retrieves_matching_image_documents(self):
         """MaxSim multivector head: every query's best match is its own image document."""
-        self._run_image_document_retrieval(
-            head="multivector",
-            score_bounds=(-1.0, 1.0),
-            expected_scores=[
+        queries, images = self._embed_image_pair(head="multivector")
+        self._assert_diagonal_retrieval(
+            self.processor.score_retrieval(queries, images),
+            expected=[
                 [0.8281, 0.6679, 0.8145],
                 [0.7385, 0.8536, 0.7621],
                 [0.7486, 0.7014, 0.8988],
@@ -707,9 +636,13 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     def test_dense_head_retrieves_matching_image_documents(self):
         """Latent-attention dense head: same diagonal retrieval on image documents, scored by cosine."""
-        self._run_image_document_retrieval(
-            head="dense",
-            expected_scores=[
+        queries, images = self._embed_image_pair(head="dense")
+
+        self.assertEqual(images.shape, (len(self.dataset), self.model.config.hidden_size))
+        torch.testing.assert_close(images.norm(dim=-1), torch.ones_like(images[:, 0]), rtol=1e-3, atol=1e-3)
+        self._assert_diagonal_retrieval(
+            self.processor.score_retrieval(queries, images),
+            expected=[
                 [0.6396, 0.4721, 0.5920],
                 [0.6066, 0.6850, 0.6375],
                 [0.5440, 0.5334, 0.6988],
@@ -718,9 +651,10 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     def test_multivector_head_retrieves_matching_text_documents(self):
         """MaxSim multivector head: every query beats its matching text document."""
-        self._run_text_document_retrieval(
-            head="multivector",
-            expected_scores=[
+        queries, documents = self._embed_text_pair(head="multivector")
+        self._assert_diagonal_retrieval(
+            self.processor.score_retrieval(queries, documents),
+            expected=[
                 [0.8280, 0.3310],
                 [0.3668, 0.6765],
             ],
@@ -728,10 +662,42 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     def test_dense_head_retrieves_matching_text_documents(self):
         """Latent-attention dense head: same diagonal retrieval on text documents, scored by cosine."""
-        self._run_text_document_retrieval(
-            head="dense",
-            expected_scores=[
+        queries, documents = self._embed_text_pair(head="dense")
+
+        torch.testing.assert_close(documents.norm(dim=-1), torch.ones_like(documents[:, 0]), rtol=1e-3, atol=1e-3)
+        self._assert_diagonal_retrieval(
+            self.processor.score_retrieval(queries, documents),
+            expected=[
                 [0.8187, 0.4083],
                 [0.4266, 0.7311],
             ],
         )
+
+    def _embed(self, batch, head: str) -> "torch.Tensor":
+        """Embeddings for one retrieval side, computing only `head` so the other costs nothing."""
+        only_this_head = {"output_multivector": False} if head == "dense" else {"output_dense": False}
+        with torch.inference_mode():
+            outputs = self.model(**batch.to(torch_device), **only_this_head)
+        return outputs.dense_embeddings if head == "dense" else outputs.multivector_embeddings
+
+    def _embed_image_pair(self, head: str) -> tuple["torch.Tensor", "torch.Tensor"]:
+        """`(queries, image documents)` from hf-internal-testing/document-visual-retrieval-test."""
+        queries = self.processor(text=self.dataset["query"][:], text_role="query")
+        images = self.processor(images=self.dataset["image"][:])
+        return self._embed(queries, head), self._embed(images, head)
+
+    def _embed_text_pair(self, head: str) -> tuple["torch.Tensor", "torch.Tensor"]:
+        """`(queries, text documents)`: the same retrieval task with `<doc>` passages instead of pages."""
+        queries = self.processor(text=self.TEXT_QUERIES, text_role="query")
+        documents = self.processor(text=self.TEXT_DOCUMENTS, text_role="document")
+        return self._embed(queries, head), self._embed(documents, head)
+
+    def _assert_diagonal_retrieval(self, scores: "torch.Tensor", expected: list[list[float]]) -> None:
+        """Every query ranks its own document first, and the scores themselves have not drifted.
+
+        Both heads score in `[-1, 1]`: MaxSim divides by the query length, cosine is bounded by definition.
+        """
+        self.assertEqual(scores.shape, (len(expected), len(expected)))
+        self.assertTrue((scores.argmax(dim=1) == torch.arange(len(expected), device=scores.device)).all())
+        self.assertTrue(((scores >= -1.0) & (scores <= 1.0)).all())
+        torch.testing.assert_close(scores, torch.tensor(expected, dtype=scores.dtype), rtol=1e-3, atol=1e-3)
