@@ -13,15 +13,17 @@
 # limitations under the License.
 """Image processor class for NeoMME."""
 
-import numpy as np
+import torch
+from torchvision.transforms.v2 import functional as tvF
 
-from ...image_processing_backends import PilBackend
+from ...image_processing_backends import TorchvisionBackend
 from ...image_processing_utils import BatchFeature
 from ...image_utils import ImageInput, PILImageResampling, SizeDict
 from ...processing_utils import ImagesKwargs, Unpack
 from ...utils import TensorType, auto_docstring
 
 
+# Copied from transformers.models.neomme.image_processing_pil_neomme.get_resize_scale
 def get_resize_scale(
     height: int, width: int, max_side: int | None, max_pixels: int | None, min_pixels: int | None
 ) -> float:
@@ -53,13 +55,13 @@ def get_resize_scale(
     return scale
 
 
-def convert_image_to_patches(image: np.ndarray, patch_size: int) -> np.ndarray:
+def convert_image_to_patches(image: "torch.Tensor", patch_size: int) -> "torch.Tensor":
     """`(num_channels, height, width)` -> `(num_patches, patch_size * patch_size * num_channels)`, row-major."""
     num_channels, height, width = image.shape
     num_patches_height = height // patch_size
     num_patches_width = width // patch_size
     patches = image.reshape(num_channels, num_patches_height, patch_size, num_patches_width, patch_size)
-    patches = patches.transpose(1, 3, 2, 4, 0)
+    patches = patches.permute(1, 3, 2, 4, 0)
     return patches.reshape(num_patches_height * num_patches_width, -1)
 
 
@@ -82,7 +84,7 @@ class NeoMMEImageProcessorKwargs(ImagesKwargs, total=False):
 
 
 @auto_docstring
-class NeoMMEImageProcessorPil(PilBackend):
+class NeoMMEImageProcessor(TorchvisionBackend):
     r"""
     Constructs a NeoMME image processor.
 
@@ -122,13 +124,13 @@ class NeoMMEImageProcessorPil(PilBackend):
 
     def _preprocess(
         self,
-        images: list[np.ndarray],
+        images: list["torch.Tensor"],
         do_resize: bool,
         patch_size: int,
         max_side: int | None,
         max_pixels: int | None,
         min_pixels: int | None,
-        resample: "PILImageResampling | None",
+        resample: "PILImageResampling | tvF.InterpolationMode | int | None",
         do_rescale: bool,
         rescale_factor: float,
         do_normalize: bool,
@@ -137,9 +139,11 @@ class NeoMMEImageProcessorPil(PilBackend):
         return_tensors: str | TensorType | None,
         **kwargs,
     ) -> BatchFeature:
-        pixel_values: list[np.ndarray] = []
+        pixel_values: list[torch.Tensor] = []
         image_grid_hw: list[tuple[int, int]] = []
 
+        # Per image, because each one gets its own patch grid: the usual group-by-shape batching would
+        # have to regroup after every step, and a page's grid is what decides its token count.
         for image in images:
             if do_resize:
                 image = self._resize_to_budget(image, max_side, max_pixels, min_pixels, resample)
@@ -147,18 +151,17 @@ class NeoMMEImageProcessorPil(PilBackend):
             # black canvas the reference implementation pastes onto.
             image, grid_height, grid_width = self._pad_to_patch_grid(image, patch_size)
 
-            if do_rescale:
-                image = self.rescale(image, rescale_factor)
-            if do_normalize:
-                image = self.normalize(image, image_mean, image_std)
+            image = self.rescale_and_normalize(
+                image, do_rescale, rescale_factor, do_normalize, image_mean, image_std
+            )
 
             pixel_values.append(convert_image_to_patches(image, patch_size))
             image_grid_hw.append((grid_height, grid_width))
 
         return BatchFeature(
             data={
-                "pixel_values": np.concatenate(pixel_values, axis=0),
-                "image_grid_hw": np.array(image_grid_hw, dtype=np.int64),
+                "pixel_values": torch.cat(pixel_values, dim=0),
+                "image_grid_hw": torch.tensor(image_grid_hw, dtype=torch.int64),
             },
             tensor_type=return_tensors,
         )
@@ -179,27 +182,29 @@ class NeoMMEImageProcessorPil(PilBackend):
 
     def _resize_to_budget(
         self,
-        image: np.ndarray,
+        image: "torch.Tensor",
         max_side: int | None,
         max_pixels: int | None,
         min_pixels: int | None,
-        resample: "PILImageResampling | None",
-    ) -> np.ndarray:
+        resample: "PILImageResampling | tvF.InterpolationMode | int | None",
+    ) -> "torch.Tensor":
         height, width = image.shape[-2], image.shape[-1]
         scale = get_resize_scale(height, width, max_side, max_pixels, min_pixels)
         if scale == 1.0:
             return image
         size = SizeDict(height=max(1, round(height * scale)), width=max(1, round(width * scale)))
-        return self.resize(image=image, size=size, resample=resample)
+        # `antialias=True` is the default, passed explicitly because it is what holds this backend to the
+        # PIL one: without it a downscaled page differs by up to 166 of 255 levels, not one.
+        return self.resize(image=image, size=size, resample=resample, antialias=True)
 
-    def _pad_to_patch_grid(self, image: np.ndarray, patch_size: int) -> tuple[np.ndarray, int, int]:
+    def _pad_to_patch_grid(self, image: "torch.Tensor", patch_size: int) -> tuple["torch.Tensor", int, int]:
         height, width = image.shape[-2], image.shape[-1]
         grid_height, grid_width = -(-height // patch_size), -(-width // patch_size)
         pad_height = grid_height * patch_size - height
         pad_width = grid_width * patch_size - width
         if pad_height or pad_width:
-            image = np.pad(image, ((0, 0), (0, pad_height), (0, pad_width)), mode="constant", constant_values=0)
+            image = tvF.pad(image, [0, 0, pad_width, pad_height], fill=0)
         return image, grid_height, grid_width
 
 
-__all__ = ["NeoMMEImageProcessorPil"]
+__all__ = ["NeoMMEImageProcessor"]

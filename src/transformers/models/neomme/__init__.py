@@ -19,6 +19,7 @@ from ...utils.import_utils import define_import_structure
 
 if TYPE_CHECKING:
     from .configuration_neomme import *
+    from .image_processing_neomme import *
     from .image_processing_pil_neomme import *
     from .modeling_neomme import *
     from .processing_neomme import *

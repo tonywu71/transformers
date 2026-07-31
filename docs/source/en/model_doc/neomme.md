@@ -102,6 +102,11 @@ L2-normalized, so the prefix is itself a unit vector).
 [[autodoc]] NeoMMEImageProcessor
     - preprocess
 
+## NeoMMEImageProcessorPil
+
+[[autodoc]] NeoMMEImageProcessorPil
+    - preprocess
+
 ## NeoMMEProcessor
 
 [[autodoc]] NeoMMEProcessor

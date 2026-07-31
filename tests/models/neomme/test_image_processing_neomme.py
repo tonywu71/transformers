@@ -26,7 +26,7 @@ from ...test_image_processing_common import ImageProcessingTestMixin, prepare_im
 if is_vision_available():
     from PIL import Image
 
-    from transformers import NeoMMEImageProcessor
+    from transformers import NeoMMEImageProcessor, NeoMMEImageProcessorPil
 
 
 PATCH_SIZE = 4
@@ -188,15 +188,29 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
     def test_call_numpy_4_channels(self):
         pass
 
-    @unittest.skip(reason="NeoMME ships a PIL processor only; PIL resizing is what makes processor parity exact")
-    def test_new_models_require_torchvision_backend(self):
-        pass
-
     # --- NeoMME-specific behaviour, kept from the hand-written suite ---
 
     def make_image(self, height: int, width: int) -> "Image.Image":
         rng = np.random.default_rng(0)
         return Image.fromarray(rng.integers(0, 255, (height, width, 3), dtype=np.uint8))
+
+    def test_the_two_backends_agree_once_a_resolution_budget_resizes(self):
+        """The inherited `test_backends_equivalence` runs with default kwargs, where nothing is resized and
+        the two backends come out bit-identical. Resampling is the only place they can diverge, and only PIL
+        matches the reference implementation, so each budget is pinned here: antialiased torchvision lands
+        within one 8-bit level (`1/127.5` after the rescale), where antialiasing off is off by over a hundred.
+        """
+        image = self.make_image(64, 39)
+        one_level = 1 / 127.5
+
+        for budget in ({"max_side": 16}, {"max_pixels": 24 * 24}, {"min_pixels": 128 * 128}):
+            with self.subTest(budget=budget):
+                fast = NeoMMEImageProcessor(patch_size=PATCH_SIZE)(images=[image], return_tensors="np", **budget)
+                slow = NeoMMEImageProcessorPil(patch_size=PATCH_SIZE)(images=[image], return_tensors="np", **budget)
+
+                self.assertEqual(fast["image_grid_hw"].tolist(), slow["image_grid_hw"].tolist())
+                self.assertEqual(fast["pixel_values"].shape, slow["pixel_values"].shape)
+                np.testing.assert_allclose(fast["pixel_values"], slow["pixel_values"], atol=one_level + 1e-6, rtol=0)
 
     def test_pixels_are_scaled_to_minus_one_one_and_padding_is_minus_one(self):
         """Padding is added to the RAW image, so padded pixels land at exactly -1 after the rescale."""

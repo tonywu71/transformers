@@ -39,11 +39,7 @@ def _pad_grids(embeddings: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tens
 
 
 def _as_padded_grids(embeddings: torch.Tensor | list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-    """Accept either a padded 3-D tensor or a list of `(length, dim)` grids; return `(grids, mask)`.
-
-    A 3-D tensor is assumed to come straight from [`NeoMMEForRetrieval`], whose multi-vector head zeroes
-    padding rows exactly, so all-zero rows are the padding mask.
-    """
+    """Accept either a padded 3-D tensor or a list of token grids."""
     if isinstance(embeddings, torch.Tensor) and embeddings.dim() == 3:
         return embeddings, embeddings.abs().sum(-1) > 0
     return _pad_grids(list(embeddings))
@@ -56,13 +52,7 @@ def maxsim_scores(
     passage_mask: torch.Tensor,
     normalize: bool = True,
 ) -> torch.Tensor:
-    """ColBERT/ColPali late interaction: sum over query tokens of the max cosine over passage tokens.
-
-    Padded passage tokens are dropped from the max and padded query tokens contribute nothing.
-    `normalize` divides by the query length, making the score a MEAN over query tokens so one
-    temperature stays valid across very different query lengths — this is what NeoMME was trained and
-    evaluated with. A fully padded passage is floored to a finite never-match `-1.0`.
-    """
+    """ColBERT-style late interaction: sum over query tokens of max cosine similarity over passage tokens."""
     query_grids = torch.nn.functional.normalize(query_grids.float(), dim=-1) * query_mask[..., None]
     passage_grids = torch.nn.functional.normalize(passage_grids.float(), dim=-1)
     similarity = torch.einsum("qid,pjd->qpij", query_grids, passage_grids)
@@ -85,19 +75,10 @@ class NeoMMEProcessorKwargs(ProcessingKwargs, total=False):
 @auto_docstring
 class NeoMMEProcessor(ProcessorMixin):
     r"""
-    Constructs a NeoMME processor: a tokenizer plus a [`NeoMMEImageProcessor`], with the query/document
-    marker convention baked in.
+    Constructs a NeoMME processor that wraps a tokenizer and image processor.
 
-    Queries and documents are opposite retrieval sides encoded in separate forward passes, so exactly one
-    modality is accepted per call:
-
-    - `process_queries` emits `[<query>] + tokens + query_expand * [<mask>]` (ColBERT query augmentation;
-      the `<mask>` token is also the model's masked-diffusion fill token, so its representation is the
-      strongest one available).
-    - `process_text_documents` emits `[<doc>] + tokens`.
-    - `process_images` emits `<doc> <img>` followed by the row-major patch grid with a `<row>` break token
-      at the end of every patch row, plus the two-axis `position_ids` the grid needs.
-
+    Queries and documents are encoded in separate forward passes, so exactly one of `text` or `images`
+    is accepted per call.
     """
 
     valid_processor_kwargs = NeoMMEProcessorKwargs
@@ -190,11 +171,7 @@ class NeoMMEProcessor(ProcessorMixin):
         padding: bool | str = "longest",
         return_tensors: str | None = "pt",
     ) -> BatchFeature:
-        """Tokenize queries, prefix `<query>`, append the `<mask>` expansion, then pad the batch.
-
-        When `max_length` is set the CONTENT is truncated to `max_length - 1 - query_expand` so the marker
-        and the full expansion suffix always survive.
-        """
+        """Tokenize queries with `<query>` prefix and `<mask>` expansion."""
         if isinstance(text, str):
             text = [text]
         marker_ids = self._marker_ids()
@@ -219,7 +196,7 @@ class NeoMMEProcessor(ProcessorMixin):
         padding: bool | str = "longest",
         return_tensors: str | None = "pt",
     ) -> BatchFeature:
-        """Tokenize text passages, prefix `<doc>` (no query expansion), then pad the batch."""
+        """Tokenize text documents with `<doc>` prefix."""
         if isinstance(text, str):
             text = [text]
         marker_ids = self._marker_ids()
@@ -231,12 +208,7 @@ class NeoMMEProcessor(ProcessorMixin):
         return self._pad_sequences(sequences, padding=padding, max_length=max_length, return_tensors=return_tensors)
 
     def process_images(self, images: ImageInput, **kwargs) -> BatchFeature:
-        """Patchify each page and lay it out as `<doc> <img>` + the row-major patch grid.
-
-        Every image restarts its position grid at `(0, 0)`: the two marker tokens take the diagonal
-        positions `(0, 0)` and `(1, 1)`, and patch `(row, column)` takes position `(2 + row, 2 + column)`.
-        Carrying a running offset across a batch corrupts every image after the first.
-        """
+        """Patchify images and build the document layout with two-axis position ids."""
         if is_valid_image(images):
             images = [images]
         return_tensors = kwargs.setdefault("return_tensors", "pt")
@@ -265,23 +237,15 @@ class NeoMMEProcessor(ProcessorMixin):
         *,
         normalize: bool = True,
     ) -> torch.Tensor:
-        """`(num_queries, num_passages)` scores: MaxSim for multi-vector inputs, cosine for dense ones.
-
-        The first five parameters match every in-tree Col\\* processor position for position, so code written
-        against `ColQwen2Processor` keeps meaning the same thing here. `normalize` is keyword-only for that
-        reason: it used to sit where Col\\* takes `batch_size`, which made `score_retrieval(q, p, 128)` quietly
-        ask for un-normalized scores instead of a chunk size.
+        """Score query-passage pairs with MaxSim or cosine similarity.
 
         Args:
             query_embeddings / passage_embeddings:
-                Either 3-D padded multi-vector grids / lists of `(length, dim)` grids, or 2-D dense
-                matrices. Both sides must be of the same kind.
+                Multi-vector grids or dense vectors. Both sides must use the same representation.
             batch_size (`int`, *optional*, defaults to 128):
-                MaxSim only: how many queries and passages to score per block. The similarity tensor is
-                `(queries, passages, query_length, passage_length)`, so scoring everything at once is what
-                runs a large corpus out of memory.
+                MaxSim chunk size over queries and passages.
             normalize (`bool`, *optional*, defaults to `True`):
-                MaxSim only: divide by the query length so the score is a mean over query tokens.
+                Whether to divide MaxSim scores by the query length.
         """
         if len(query_embeddings) == 0 or len(passage_embeddings) == 0:
             raise ValueError("Both `query_embeddings` and `passage_embeddings` must be non-empty")
@@ -301,12 +265,7 @@ class NeoMMEProcessor(ProcessorMixin):
         return scores.to(output_dtype or scores.dtype).to(output_device)
 
     def _marker_ids(self) -> dict[str, int]:
-        """Marker name -> token id, refusing a tokenizer that does not carry the markers.
-
-        `convert_tokens_to_ids` answers `unk_token_id` for a token it has never seen, so checking for
-        `None` catches almost nothing: the markers would silently degrade into `<unk>`, which costs recall
-        without failing anything.
-        """
+        """Resolve marker token ids and validate that the tokenizer defines them."""
         ids = {
             "query": self.tokenizer.convert_tokens_to_ids(self.query_token),
             "document": self.tokenizer.convert_tokens_to_ids(self.document_token),
@@ -381,18 +340,7 @@ class NeoMMEProcessor(ProcessorMixin):
         return longest
 
     def _supported_text_kwargs(self, text_kwargs: dict[str, Any], requested: set[str]) -> dict[str, Any]:
-        """Keep the text kwargs this processor implements, and refuse the rest rather than drop it.
-
-        The marker convention is not negotiable: `add_special_tokens` or `stride` would silently corrupt the
-        layout the model was trained on, and a kwarg that is quietly ignored is worse than one that raises.
-        Truncation needs no flag — a `max_length` always truncates the content and never the markers.
-
-        Only `requested` — what the CALLER passed — is refusable. `_merge_kwargs` also folds in defaults from
-        `tokenizer.init_kwargs`, so a `tokenizer_config.json` carrying `padding_side` (as every tokenizer
-        copied from Llama, Qwen or Mistral does) would otherwise make every text call raise over a kwarg the
-        caller never wrote. An injected value is dropped instead: this processor always right-pads. An
-        explicit `padding_side=` from the caller still raises rather than being silently ignored.
-        """
+        """Filter text kwargs to the subset supported by this processor."""
         supported = {
             name: text_kwargs[name] for name in ("max_length", "padding", "return_tensors") if name in text_kwargs
         }
@@ -413,13 +361,7 @@ class NeoMMEProcessor(ProcessorMixin):
         batch_size: int,
         normalize: bool,
     ) -> torch.Tensor:
-        """MaxSim over a block grid of queries x passages, concatenated back into the full score matrix.
-
-        Every step in `maxsim_scores` is local to one query row and one passage column — the max is over a
-        passage's own tokens, the normalization over a query's own — so `batch_size` changes only the peak
-        size of the similarity tensor, never a ranking. It is not bitwise stable: a smaller einsum contracts
-        in a different order, which moves float32 scores by around 1e-7.
-        """
+        """Compute MaxSim scores in query-passage blocks."""
         query_grids, query_mask = _as_padded_grids(query_embeddings)
         passage_grids, passage_mask = _as_padded_grids(passage_embeddings)
 

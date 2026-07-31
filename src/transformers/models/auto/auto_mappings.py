@@ -1226,7 +1226,7 @@ IMAGE_PROCESSOR_MAPPING_NAMES = OrderedDict(
         ("mobilenet_v1", {"pil": "MobileNetV1ImageProcessorPil", "torchvision": "MobileNetV1ImageProcessor"}),
         ("mobilenet_v2", {"pil": "MobileNetV2ImageProcessorPil", "torchvision": "MobileNetV2ImageProcessor"}),
         ("mobilevit", {"pil": "MobileViTImageProcessorPil", "torchvision": "MobileViTImageProcessor"}),
-        ("neomme", {"pil": "NeoMMEImageProcessor"}),
+        ("neomme", {"pil": "NeoMMEImageProcessorPil", "torchvision": "NeoMMEImageProcessor"}),
         ("nougat", {"pil": "NougatImageProcessorPil", "torchvision": "NougatImageProcessor"}),
         ("oneformer", {"pil": "OneFormerImageProcessorPil", "torchvision": "OneFormerImageProcessor"}),
         ("ovis2", {"pil": "Ovis2ImageProcessorPil", "torchvision": "Ovis2ImageProcessor"}),
