@@ -259,26 +259,37 @@ class NeoMMEProcessor(ProcessorMixin):
         self,
         query_embeddings: torch.Tensor | list[torch.Tensor],
         passage_embeddings: torch.Tensor | list[torch.Tensor],
-        normalize: bool = True,
+        batch_size: int = 128,
         output_dtype: torch.dtype | None = None,
         output_device: str | torch.device = "cpu",
+        *,
+        normalize: bool = True,
     ) -> torch.Tensor:
         """`(num_queries, num_passages)` scores: MaxSim for multi-vector inputs, cosine for dense ones.
+
+        The first five parameters match every in-tree Col\\* processor position for position, so code written
+        against `ColQwen2Processor` keeps meaning the same thing here. `normalize` is keyword-only for that
+        reason: it used to sit where Col\\* takes `batch_size`, which made `score_retrieval(q, p, 128)` quietly
+        ask for un-normalized scores instead of a chunk size.
 
         Args:
             query_embeddings / passage_embeddings:
                 Either 3-D padded multi-vector grids / lists of `(length, dim)` grids, or 2-D dense
                 matrices. Both sides must be of the same kind.
+            batch_size (`int`, *optional*, defaults to 128):
+                MaxSim only: how many queries and passages to score per block. The similarity tensor is
+                `(queries, passages, query_length, passage_length)`, so scoring everything at once is what
+                runs a large corpus out of memory.
             normalize (`bool`, *optional*, defaults to `True`):
                 MaxSim only: divide by the query length so the score is a mean over query tokens.
         """
         if len(query_embeddings) == 0 or len(passage_embeddings) == 0:
             raise ValueError("Both `query_embeddings` and `passage_embeddings` must be non-empty")
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be at least 1, got {batch_size}")
 
         if self._is_multi_vector(passage_embeddings):
-            query_grids, query_mask = _as_padded_grids(query_embeddings)
-            passage_grids, passage_mask = _as_padded_grids(passage_embeddings)
-            scores = maxsim_scores(query_grids, passage_grids, query_mask, passage_mask, normalize=normalize)
+            scores = self._maxsim_in_blocks(query_embeddings, passage_embeddings, batch_size, normalize)
         else:
             queries = self._as_dense(query_embeddings)
             passages = self._as_dense(passage_embeddings)
@@ -394,6 +405,39 @@ class NeoMMEProcessor(ProcessorMixin):
         if unsupported:
             raise ValueError(f"NeoMMEProcessor does not implement these text kwargs: {unsupported}.")
         return supported
+
+    def _maxsim_in_blocks(
+        self,
+        query_embeddings: torch.Tensor | list[torch.Tensor],
+        passage_embeddings: torch.Tensor | list[torch.Tensor],
+        batch_size: int,
+        normalize: bool,
+    ) -> torch.Tensor:
+        """MaxSim over a block grid of queries x passages, concatenated back into the full score matrix.
+
+        Every step in `maxsim_scores` is local to one query row and one passage column — the max is over a
+        passage's own tokens, the normalization over a query's own — so `batch_size` changes only the peak
+        size of the similarity tensor, never a ranking. It is not bitwise stable: a smaller einsum contracts
+        in a different order, which moves float32 scores by around 1e-7.
+        """
+        query_grids, query_mask = _as_padded_grids(query_embeddings)
+        passage_grids, passage_mask = _as_padded_grids(passage_embeddings)
+
+        rows: list[torch.Tensor] = []
+        for query_start in range(0, len(query_grids), batch_size):
+            queries = slice(query_start, query_start + batch_size)
+            columns = [
+                maxsim_scores(
+                    query_grids[queries],
+                    passage_grids[passage_start : passage_start + batch_size],
+                    query_mask[queries],
+                    passage_mask[passage_start : passage_start + batch_size],
+                    normalize=normalize,
+                )
+                for passage_start in range(0, len(passage_grids), batch_size)
+            ]
+            rows.append(torch.cat(columns, dim=1))
+        return torch.cat(rows, dim=0)
 
     def _is_multi_vector(self, embeddings: torch.Tensor | list[torch.Tensor]) -> bool:
         if isinstance(embeddings, torch.Tensor):
