@@ -603,8 +603,14 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
             (input_ids == self.config.image_token_id) & (previous_ids != self.config.document_token_id)
         ).unsqueeze(-1)
         # Counting the placeholders reads a value only the runtime knows, which `fullgraph=True` refuses to
-        # guard on ("Could not guard on data-dependent expression"). The check is a friendlier version of the
-        # error `masked_scatter` raises anyway, so tracing skips it.
+        # guard on ("Could not guard on data-dependent expression"), so tracing skips the check. `torch._check`
+        # is no help: with a message closure dynamo refuses it outright, and without one the assert does not
+        # fire. Consequence, measured: under `fullgraph=True` too FEW patches still raise from
+        # `masked_scatter` ("Number of elements of source < number of ones in mask"), but too MANY are
+        # silently dropped, since it fills every masked slot and ignores the rest. No supported path can get
+        # there — `NeoMMEProcessor` emits the patches and their placeholders together — so this only covers
+        # hand-assembled inputs. The research implementation is immune to both directions because it scatters
+        # by explicit `patch_index` with `index_copy`, which compares two SHAPES.
         if not is_torchdynamo_compiling():
             num_image_tokens = int(image_mask.sum())
             if num_image_tokens != pixel_values.shape[0]:
