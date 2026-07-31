@@ -356,6 +356,7 @@ MODEL_MAPPING_NAMES = OrderedDict(
         ("nemotron_asr_streaming", "NemotronAsrStreamingForRNNT"),
         ("nemotron_asr_streaming_encoder", "NemotronAsrStreamingEncoder"),
         ("nemotron_h", "NemotronHModel"),
+        ("neomme", "NeoMMEModel"),
         ("nllb-moe", "NllbMoeModel"),
         ("nomic_bert", "NomicBertModel"),
         ("nystromformer", "NystromformerModel"),
@@ -1053,6 +1054,7 @@ MODEL_FOR_RETRIEVAL_MAPPING_NAMES = OrderedDict(
     [
         ("colmodernvbert", "ColModernVBertForRetrieval"),
         ("colpali", "ColPaliForRetrieval"),
+        ("neomme", "NeoMMEForRetrieval"),
     ]
 )
 
@@ -1195,6 +1197,7 @@ MODEL_FOR_MASKED_LM_MAPPING_NAMES = OrderedDict(
         ("mpnet", "MPNetForMaskedLM"),
         ("mra", "MraForMaskedLM"),
         ("mvp", "MvpForConditionalGeneration"),
+        ("neomme", "NeoMMEForMaskedLM"),
         ("nomic_bert", "NomicBertForMaskedLM"),
         ("nystromformer", "NystromformerForMaskedLM"),
         ("perceiver", "PerceiverForMaskedLM"),

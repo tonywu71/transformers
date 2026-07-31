@@ -308,6 +308,7 @@ if TYPE_CHECKING:
     from .nanochat import *
     from .nemotron import *
     from .nemotron_h import *
+    from .neomme import *
     from .nllb import *
     from .nllb_moe import *
     from .nomic_bert import *

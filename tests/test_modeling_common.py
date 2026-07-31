@@ -834,6 +834,9 @@ class ModelTesterMixin(ExportTesterMixin):
             "BeitModelTest": 4,  # BeitForSemanticSegmentation requires config.out_indices to be a list of 4 integers
             "ZambaModelTest": 5,  # The minimum number to test beyond the initial ["mamba", "mamba", "hybrid"] in `ZambaConfig._layers_block_type`
             "Wav2Vec2BertModelTest": 4,
+            # need both sliding-window widths plus the always-global last layer
+            "NeoMMEModelTest": 4,
+            "NeoMMEForRetrievalModelTest": 4,
         }
         target_num_hidden_layers = exceptional_num_hidden_layers.get(type(self).__name__, 2)
 
