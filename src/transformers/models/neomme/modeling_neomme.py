@@ -198,6 +198,9 @@ def apply_interleaved_rotary_pos_emb(
 ) -> torch.Tensor:
     """Apply interleaved rotary position embeddings to query or key states.
 
+    NeoMME rotates even/odd dimension pairs rather than the first/second half split
+    used by most models in `transformers`.
+
     Args:
         hidden_states (`torch.Tensor` of shape `(batch_size, seq_len, num_heads, head_dim)`):
             Query or key states, heads-last.
@@ -220,7 +223,11 @@ def apply_interleaved_rotary_pos_emb(
 
 
 class NeoMMEAttention(nn.Module):
-    """Bidirectional grouped-query attention with QK-norm, M-RoPE, and a sigmoid output gate."""
+    """Bidirectional grouped-query attention with QK-norm, M-RoPE, and a sigmoid output gate.
+
+    QK-norm runs before rotary embedding, value embeddings are added after rotation, and
+    exclusive self-attention is applied before the output gate.
+    """
 
     def __init__(self, config: NeoMMEConfig, layer_idx: int):
         super().__init__()
@@ -411,6 +418,9 @@ class NeoMMEPreTrainedModel(PreTrainedModel):
 
     @torch.no_grad()
     def _init_weights(self, module: nn.Module):
+        # Generic init for whatever the branches below do not name. Safe for the tensors NeoMME needs born
+        # at exactly zero: `apply` visits children before parents, so the parent-level zeroing runs last.
+        super()._init_weights(module)
         std = self.config.initializer_range
 
         if isinstance(module, NeoMMEEmbeddings):
@@ -693,6 +703,7 @@ class NeoMMEForMaskedLM(NeoMMEPreTrainedModel):
     """
 )
 @dataclass
+# TODO: remove if we don't ship Matryoshka
 class NeoMMEForRetrievalOutput(ModelOutput):
     r"""
     loss (`torch.FloatTensor` of shape `(1,)`, *optional*):
@@ -716,8 +727,8 @@ class NeoMMEForRetrievalOutput(ModelOutput):
 @auto_docstring(
     custom_intro="""
     NeoMME with multi-vector and dense retrieval heads from a single backbone pass. Multi-vector
-    embeddings are scored with MaxSim; dense embeddings with cosine similarity. See
-    [`NeoMMEProcessor.score_retrieval`].
+    embeddings are per-token vectors scored with MaxSim; dense embeddings are one pooled vector per
+    input scored with cosine similarity. See [`NeoMMEProcessor.score_retrieval`].
     """
 )
 class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
@@ -746,7 +757,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         inputs_embeds: torch.Tensor | None = None,
         output_multivector: bool = True,
         output_dense: bool = True,
-        dense_dim: int | None = None,
+        dense_dim: int | None = None,  # TODO: remove if we don't ship Matryoshka
         **kwargs: Unpack[TransformersKwargs],
     ) -> NeoMMEForRetrievalOutput:
         r"""
@@ -755,7 +766,8 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         output_dense (`bool`, *optional*, defaults to `True`):
             Whether to return the pooled dense vector.
         dense_dim (`int`, *optional*):
-            Matryoshka width for the dense vector. The pooled vector is truncated before L2 normalization.
+            Matryoshka width for the dense vector. The pooled vector is truncated to this width before
+            L2 normalization.
         """
         if not (output_multivector or output_dense):
             raise ValueError("At least one of `output_multivector` or `output_dense` must be True")
@@ -807,7 +819,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         position_ids: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
         inputs_embeds: torch.Tensor | None = None,
-        dense_dim: int | None = None,
+        dense_dim: int | None = None,  # TODO: remove if we don't ship Matryoshka
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         """Return pooled dense retrieval embeddings."""
@@ -834,6 +846,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
     def _dense(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, dense_dim: int | None = None
     ) -> torch.Tensor:
+        # TODO: remove if we don't ship Matryoshka
         pooled = self.pooler(hidden_states, attention_mask.bool())  # (batch_size, hidden_size)
         if dense_dim is None:
             return F.normalize(pooled, dim=-1)
@@ -842,7 +855,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         # vector, which downstream cosine scoring cannot detect.
         if not 0 < dense_dim <= pooled.shape[-1]:
             raise ValueError(f"dense_dim must be in 1..{pooled.shape[-1]} (the pooled width), got {dense_dim}")
-        return F.normalize(pooled[..., :dense_dim], dim=-1)  # Matryoshka: truncate BEFORE normalizing
+        return F.normalize(pooled[..., :dense_dim], dim=-1)  # TODO: remove if we don't ship Matryoshka
 
 
 __all__ = ["NeoMMEForMaskedLM", "NeoMMEForRetrieval", "NeoMMEModel", "NeoMMEPreTrainedModel"]

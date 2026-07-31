@@ -37,7 +37,7 @@ def get_resize_scale(
         max_pixels (`int`, *optional*):
             Maximum pixel area. Downscale only.
         min_pixels (`int`, *optional*):
-            Minimum pixel area. May upscale the image.
+            Minimum pixel area. May upscale the image. Caps take precedence when both bounds apply.
 
     Returns:
         `float`: Scale factor to apply to the image.
@@ -72,7 +72,7 @@ class NeoMMEImageProcessorKwargs(ImagesKwargs, total=False):
     max_pixels (`int`, *optional*):
         Pixel-area cap. Unset means no area cap.
     min_pixels (`int`, *optional*):
-        Pixel-area floor; the only setting that ever upscales an image.
+        Pixel-area floor; may upscale the image. Caps take precedence when both bounds apply.
     """
 
     patch_size: int

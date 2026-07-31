@@ -78,6 +78,7 @@ print(scores)
 `forward` returns both heads by default. Pass `output_dense=False` or `output_multivector=False` to compute
 only one, and `dense_dim=...` to get a Matryoshka-truncated dense vector (truncated *before* it is
 L2-normalized, so the prefix is itself a unit vector).
+<!-- TODO: remove if we don't ship Matryoshka -->
 
 ## Notes
 

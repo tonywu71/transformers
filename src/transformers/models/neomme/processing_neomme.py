@@ -65,6 +65,12 @@ def maxsim_scores(
 
 
 class NeoMMEProcessorKwargs(ProcessingKwargs, total=False):
+    # These cannot move to `processor_config.json`: `_merge_kwargs` injects the base `ProcessingKwargs`
+    # values (notably `return_tensors=None`) for every key it does not find here, which overrides the
+    # defaults on the methods that consume them. A processor built in code rather than loaded from a
+    # checkpoint — every test, and any caller assembling one from a tokenizer — would then get ragged
+    # Python lists instead of tensors. Measured: dropping this block fails 22 tests.
+    # trf-ignore: TRF019
     _defaults = {
         "text_kwargs": {"padding": "longest"},
         "images_kwargs": {"do_convert_rgb": True},
@@ -78,7 +84,9 @@ class NeoMMEProcessor(ProcessorMixin):
     Constructs a NeoMME processor that wraps a tokenizer and image processor.
 
     Queries and documents are encoded in separate forward passes, so exactly one of `text` or `images`
-    is accepted per call.
+    is accepted per call. Queries are prefixed with `<query>` and expanded with `<mask>` tokens;
+    documents are prefixed with `<doc>`; image documents also include a patch grid and two-axis
+    `position_ids`.
     """
 
     valid_processor_kwargs = NeoMMEProcessorKwargs
@@ -245,7 +253,8 @@ class NeoMMEProcessor(ProcessorMixin):
             batch_size (`int`, *optional*, defaults to 128):
                 MaxSim chunk size over queries and passages.
             normalize (`bool`, *optional*, defaults to `True`):
-                Whether to divide MaxSim scores by the query length.
+                Whether to divide MaxSim scores by the query length. Keyword-only for compatibility with
+                other Col* processors.
         """
         if len(query_embeddings) == 0 or len(passage_embeddings) == 0:
             raise ValueError("Both `query_embeddings` and `passage_embeddings` must be non-empty")

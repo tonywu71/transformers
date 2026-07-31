@@ -614,6 +614,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertFalse(torch.allclose(truncated, full[:, :8], atol=1e-3))
 
     def test_dense_dim_is_validated_and_the_helpers_take_inputs_first(self):
+        # TODO: remove if we don't ship Matryoshka
         """A bad Matryoshka width used to slice silently: `dense_dim=-4` returned a shorter vector that
         downstream cosine scoring cannot tell from a good one."""
         config, input_ids, _, _ = self.model_tester.prepare_config_and_inputs()

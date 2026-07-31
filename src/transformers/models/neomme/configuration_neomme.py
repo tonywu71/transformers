@@ -30,7 +30,7 @@ class NeoMMEConfig(PreTrainedConfig):
     r"""
     embedding_rank (`int`, *optional*, defaults to 256):
         Inner dimension of the factorized token embedding table (ALBERT-style). Also used by the tied
-        masked-LM decode head.
+        masked-LM decode head. Distinct from `embedding_dim`, which sizes retrieval outputs.
     global_attn_every_n_layers (`int`, *optional*, defaults to 6):
         Every Nth layer uses full bidirectional attention; the last layer is always global. Used to
         generate `layer_types` when it is not set explicitly.
@@ -45,12 +45,12 @@ class NeoMMEConfig(PreTrainedConfig):
         Side length in pixels of one image patch. Each patch is a flattened `3 * patch_size ** 2` RGB
         vector.
     embedding_dim (`int`, *optional*, defaults to 128):
-        Output dimension of the multi-vector retrieval head. Distinct from `embedding_rank`, which sizes
-        the input embeddings.
+        Output dimension of the multi-vector retrieval head.
     document_token_id (`int`, *optional*, defaults to 5):
         Token id of the `<doc>` marker that opens every document.
     image_token_id (`int`, *optional*, defaults to 6):
-        Token id of `<img>`, used both as an image marker after `<doc>` and as patch placeholders.
+        Token id of `<img>`. The marker after `<doc>` announces an image document; later occurrences are
+        patch placeholders.
 
     Examples:
 
