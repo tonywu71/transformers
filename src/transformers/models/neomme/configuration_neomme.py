@@ -29,43 +29,32 @@ logger = logging.get_logger(__name__)
 class NeoMMEConfig(PreTrainedConfig):
     r"""
     embedding_rank (`int`, *optional*, defaults to 256):
-        Inner dimension of the factorized token embedding table (ALBERT-style). Also used by the tied
-        masked-LM decode head. Distinct from `embedding_dim`, which sizes retrieval outputs.
+        Inner dimension of the factorized token embedding table (ALBERT-style).
     global_attn_every_n_layers (`int`, *optional*, defaults to 6):
-        Every Nth layer uses full bidirectional attention; the last layer is always global. Used to
-        generate `layer_types` when it is not set explicitly.
+        Layer stride at which full bidirectional attention is used. The last layer is always global.
+        Generates `layer_types` when it is not set explicitly.
     sliding_window_short (`int`, *optional*, defaults to 256):
-        Half-width of the short sliding-window attention layers (`abs(i - j) <= sliding_window_short`).
+        Half-width of the short sliding-window attention layers.
     sliding_window_long (`int`, *optional*, defaults to 1024):
-        Half-width of the long sliding-window layers. Alternates with `sliding_window_short` by
-        sliding-layer parity.
+        Half-width of the long sliding-window attention layers. Alternates with `sliding_window_short`.
     use_value_embeds (`bool`, *optional*, defaults to `True`):
         Whether to add per-token value embeddings to the first and last global attention layers.
     patch_size (`int`, *optional*, defaults to 32):
-        Side length in pixels of one image patch. Each patch is a flattened `3 * patch_size ** 2` RGB
-        vector.
+        Side length in pixels of one image patch.
     embedding_dim (`int`, *optional*, defaults to 128):
-        Output dimension of the multi-vector retrieval head.
+        Output dimension of the multi-vector retrieval head. Unrelated to `embedding_rank`.
     document_token_id (`int`, *optional*, defaults to 5):
-        Token id of the `<doc>` marker that opens every document.
+        Token id of the `<doc>` marker token.
     image_token_id (`int`, *optional*, defaults to 6):
-        Token id of `<img>`. The marker after `<doc>` announces an image document; later occurrences are
-        patch placeholders.
-
-    Examples:
+        Token id of the `<img>` marker and patch placeholder token.
 
     ```python
     >>> from transformers import NeoMMEModel, NeoMMEConfig
 
-    >>> # Initializing a NeoMME 256M style configuration
     >>> configuration = NeoMMEConfig()
-
-    >>> # Initializing a model from that configuration
     >>> model = NeoMMEModel(configuration)
-
-    >>> # Accessing the model configuration
-    >>> configuration = model.config
-    ```"""
+    ```
+    """
 
     model_type = "neomme"
     # Gemma-4-style local/global split: the sliding layers run a short-wavelength spectrum that fits
