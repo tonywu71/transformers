@@ -19,10 +19,13 @@ import unittest
 import numpy as np
 
 from transformers.testing_utils import require_torch, require_vision
-from transformers.utils import is_torch_available, is_vision_available
+from transformers.utils import is_tokenizers_available, is_torch_available, is_vision_available
 
 from ...test_processing_common import ProcessorTesterMixin
 
+
+if is_tokenizers_available():
+    from tokenizers import Tokenizer, models, pre_tokenizers
 
 if is_vision_available():
     from PIL import Image
@@ -35,14 +38,13 @@ if is_torch_available():
 
 # The frozen special-token block: a special's id is its index here.
 SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>", "<mask>", "<doc>", "<img>", "<query>", "<row>"]
+VOCAB_WORDS = ["hello", "world", "a", "document", "query", "text", "lower", "newer"]
 
 
 def build_tokenizer(specials: list[str] | None = None) -> "PreTrainedTokenizerFast":
     """Whitespace word-level tokenizer with specials at frozen ids 0..8 (built locally, no Hub)."""
-    from tokenizers import Tokenizer, models, pre_tokenizers
-
     vocabulary = {token: index for index, token in enumerate(specials if specials is not None else SPECIAL_TOKENS)}
-    for word in ["hello", "world", "a", "document", "query", "text", "lower", "newer"]:
+    for word in VOCAB_WORDS:
         vocabulary[word] = len(vocabulary)
 
     backend = Tokenizer(models.WordLevel(vocabulary, unk_token="<unk>"))
