@@ -93,13 +93,11 @@ def maxsim_scores(
 
 
 class NeoMMEProcessorKwargs(ProcessingKwargs, total=False):
-    # These cannot move to `processor_config.json`: `_merge_kwargs` injects the base `ProcessingKwargs`
-    # values (notably `return_tensors=None`) for every key it does not find here, which overrides the
-    # defaults on the methods that consume them. A processor built in code rather than loaded from a
-    # checkpoint — every test, and any caller assembling one from a tokenizer — would then get ragged
-    # Python lists instead of tensors. Measured: dropping this block fails 22 tests. This is why the
-    # `TRF019` structure rule is still red for NeoMME, and it needs a maintainer's call rather than a
-    # workaround — the rule has no suppression directive.
+    # TODO: update based on maintainers' answer (allowlist TRF019 vs Hub wiring for call defaults).
+    # These cannot move to `processor_config.json` today: `_merge_kwargs` only reads this Python
+    # `_defaults` attribute, not Hub config. Without it, in-code construction (tests, assembling from
+    # a tokenizer) loses `return_tensors="pt"` / `padding="longest"` and ~22 tests fail. TRF019 is
+    # red for NeoMME; the rule has no suppression directive.
     _defaults = {
         "text_kwargs": {"padding": "longest"},
         "images_kwargs": {"do_convert_rgb": True},
