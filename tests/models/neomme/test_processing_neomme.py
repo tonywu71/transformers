@@ -42,7 +42,6 @@ if is_torch_available():
 @require_tokenizers
 class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     processor_class = NeoMMEProcessor if is_vision_available() else None
-    images_input_name = "pixel_values"
     patch_size = 4
     # Frozen special-token block: each special's id is its index in this list.
     special_tokens = ["<pad>", "<bos>", "<eos>", "<unk>", "<mask>", "<doc>", "<img>", "<query>", "<row>"]
@@ -103,12 +102,14 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     def test_tokenizer_defaults_preserved_by_kwargs(self):
         processor_components = self.prepare_components()
-        processor_components["tokenizer"] = self.get_component("tokenizer", max_length=117, padding="max_length")
+        processor_components["tokenizer"] = self.get_component(
+            "tokenizer", max_length=self.image_text_kwargs_max_length, padding="max_length"
+        )
         processor = self.processor_class(**processor_components)
         self.skip_processor_without_typed_kwargs(processor)
 
         inputs = processor(text=self.prepare_text_inputs(), return_tensors="pt")
-        self.assertEqual(inputs[self.text_input_name].shape[-1], 117)
+        self.assertEqual(inputs[self.text_input_name].shape[-1], self.image_text_kwargs_max_length)
 
     def test_kwargs_overrides_default_tokenizer_kwargs(self):
         processor_components = self.prepare_components()
@@ -116,15 +117,25 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         processor = self.processor_class(**processor_components)
         self.skip_processor_without_typed_kwargs(processor)
 
-        inputs = processor(text=self.prepare_text_inputs(), return_tensors="pt", max_length=112, padding="max_length")
-        self.assertEqual(inputs[self.text_input_name].shape[-1], 112)
+        inputs = processor(
+            text=self.prepare_text_inputs(),
+            return_tensors="pt",
+            max_length=self.image_text_kwargs_override_max_length,
+            padding="max_length",
+        )
+        self.assertEqual(inputs[self.text_input_name].shape[-1], self.image_text_kwargs_override_max_length)
 
     def test_unstructured_kwargs(self):
         processor = self.processor_class(**self.prepare_components())
         self.skip_processor_without_typed_kwargs(processor)
 
-        inputs = processor(text=self.prepare_text_inputs(), return_tensors="pt", padding="max_length", max_length=76)
-        self.assertEqual(inputs[self.text_input_name].shape[-1], 76)
+        inputs = processor(
+            text=self.prepare_text_inputs(),
+            return_tensors="pt",
+            padding="max_length",
+            max_length=self.image_unstructured_max_length,
+        )
+        self.assertEqual(inputs[self.text_input_name].shape[-1], self.image_unstructured_max_length)
 
     def test_structured_kwargs_nested(self):
         processor = self.processor_class(**self.prepare_components())
@@ -133,9 +144,9 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         inputs = processor(
             text=self.prepare_text_inputs(),
             common_kwargs={"return_tensors": "pt"},
-            text_kwargs={"padding": "max_length", "max_length": 76},
+            text_kwargs={"padding": "max_length", "max_length": self.image_unstructured_max_length},
         )
-        self.assertEqual(inputs[self.text_input_name].shape[-1], 76)
+        self.assertEqual(inputs[self.text_input_name].shape[-1], self.image_unstructured_max_length)
 
     def test_structured_kwargs_nested_from_dict(self):
         """Same merge path as nested kwargs, but via a single dict of dicts."""
@@ -144,10 +155,10 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
         all_kwargs = {
             "common_kwargs": {"return_tensors": "pt"},
-            "text_kwargs": {"padding": "max_length", "max_length": 76},
+            "text_kwargs": {"padding": "max_length", "max_length": self.image_unstructured_max_length},
         }
         inputs = processor(text=self.prepare_text_inputs(), **all_kwargs)
-        self.assertEqual(inputs[self.text_input_name].shape[-1], 76)
+        self.assertEqual(inputs[self.text_input_name].shape[-1], self.image_unstructured_max_length)
 
     def test_flat_kwarg_applied_when_modality_dict_lacks_it(self):
         """Flat `return_tensors` must survive next to a `text_kwargs` dict that omits it (regression #46192)."""

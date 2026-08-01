@@ -42,9 +42,6 @@ class NeoMMEImageProcessingTester:
         image_mean=None,
         image_std=None,
         patch_size=4,
-        max_side=None,
-        max_pixels=None,
-        min_pixels=None,
     ):
         self.parent = parent
         self.batch_size = batch_size
@@ -60,9 +57,6 @@ class NeoMMEImageProcessingTester:
         self.image_mean = image_mean if image_mean is not None else [1.0, 1.0, 1.0]
         self.image_std = image_std if image_std is not None else [1.0, 1.0, 1.0]
         self.patch_size = patch_size
-        self.max_side = max_side
-        self.max_pixels = max_pixels
-        self.min_pixels = min_pixels
 
     def prepare_image_processor_dict(self):
         """Init kwargs for the mixin; budgets stay unset (`None`) and are tested explicitly below."""
