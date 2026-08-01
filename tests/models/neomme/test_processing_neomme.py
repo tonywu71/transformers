@@ -17,7 +17,6 @@ import tempfile
 import unittest
 
 import numpy as np
-
 from parameterized import parameterized
 
 from transformers.testing_utils import require_tokenizers, require_torch, require_vision
@@ -207,8 +206,11 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     def test_model_input_names(self):
         processor = self.get_processor()
-        inputs = processor(images=self.prepare_image_inputs())
-        self.assertSetEqual(set(inputs.keys()), set(processor.model_input_names))
+        image_inputs = processor(images=self.prepare_image_inputs())
+        self.assertSetEqual(set(image_inputs.keys()), set(processor.model_input_names))
+        # Text queries are the other retrieval side: no vision keys.
+        query_inputs = processor(text=["hello"], text_role="query")
+        self.assertSetEqual(set(query_inputs.keys()), {"input_ids", "attention_mask"})
 
     def test_padding_and_return_tensors(self):
         """Padding and `return_tensors` used to be dropped; only `max_length` survived the merge."""
@@ -284,6 +286,18 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         self.assertNotIn(self.marker_ids["<mask>"], first)
         # An empty string becomes a single space, so no document is marker-only.
         self.assertEqual(int(batch["attention_mask"][1].sum()), 1)
+
+    def test_document_truncation(self):
+        processor = self.get_processor()
+        ids = processor(text=["hello world text"], text_role="document", max_length=2)["input_ids"][0].tolist()
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(ids[0], self.marker_ids["<doc>"])
+        self.assertNotIn(self.marker_ids["<mask>"], ids)
+
+    def test_invalid_text_role_raises(self):
+        processor = self.get_processor()
+        with self.assertRaises(ValueError):
+            processor(text=["hello"], text_role="passage")
 
     def test_one_modality_per_call(self):
         processor = self.get_processor()
@@ -368,7 +382,22 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
             passages = torch.tensor([[[1.0, 0.0]], [[0.0, 0.0]]])
             torch.testing.assert_close(processor.score_retrieval(query, passages)[0], torch.tensor([1.0, -1.0]))
 
+        with self.subTest(mode="maxsim_list_grids"):
+            query = [torch.tensor([[1.0, 0.0], [0.0, 1.0]])]
+            passages = [torch.tensor([[1.0, 0.0]]), torch.tensor([[0.0, 1.0], [0.0, 1.0]])]
+            torch.testing.assert_close(processor.score_retrieval(query, passages)[0], torch.tensor([0.5, 0.5]))
+
         with self.subTest(mode="dense_cosine"):
             queries = torch.tensor([[1.0, 0.0]])
             passages = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
             torch.testing.assert_close(processor.score_retrieval(queries, passages)[0], torch.tensor([1.0, 0.0]))
+
+        with self.subTest(mode="rejects_empty"):
+            with self.assertRaises(ValueError):
+                processor.score_retrieval(torch.zeros(0, 2), torch.ones(1, 2))
+            with self.assertRaises(ValueError):
+                processor.score_retrieval(torch.ones(1, 2), torch.zeros(0, 2))
+
+        with self.subTest(mode="rejects_bad_batch_size"):
+            with self.assertRaises(ValueError):
+                processor.score_retrieval(torch.ones(1, 2), torch.ones(1, 2), batch_size=0)
