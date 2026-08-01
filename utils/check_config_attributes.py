@@ -133,7 +133,6 @@ SPECIAL_CASES_TO_ALLOW = {
     "Llama4VisionConfig": ["multi_modal_projector_bias", "norm_eps"],
     "ModernBertConfig": ["local_attention", "reference_compile"],
     "ModernBertDecoderConfig": ["global_attn_every_n_layers", "local_attention", "local_rope_theta"],
-    # Read inside the config, which derives `layer_types` and `layer_window_sizes` from them.
     "NeoMMEConfig": ["global_attn_every_n_layers", "sliding_window_long", "sliding_window_short"],
     "SmolLM3Config": ["no_rope_layer_interval"],
     "Gemma3nVisionConfig": ["architecture", "do_pooling", "model_args"],
