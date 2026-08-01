@@ -35,15 +35,10 @@ if is_torch_available():
 
 # The frozen special-token block: a special's id is its index here.
 SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>", "<mask>", "<doc>", "<img>", "<query>", "<row>"]
-PATCH_SIZE = 4
 
 
 def build_tokenizer(specials: list[str] | None = None) -> "PreTrainedTokenizerFast":
-    """A whitespace word-level tokenizer whose specials sit at the frozen ids 0..8.
-
-    Built locally rather than pulled from the Hub: the staging checkpoint is private, and a test file that
-    needs credentials to collect is no use to anyone outside the team.
-    """
+    """Whitespace word-level tokenizer with specials at frozen ids 0..8 (built locally, no Hub)."""
     from tokenizers import Tokenizer, models, pre_tokenizers
 
     vocabulary = {token: index for index, token in enumerate(specials if specials is not None else SPECIAL_TOKENS)}
@@ -70,17 +65,14 @@ def build_tokenizer(specials: list[str] | None = None) -> "PreTrainedTokenizerFa
 class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     processor_class = NeoMMEProcessor if is_vision_available() else None
     images_input_name = "pixel_values"
+    patch_size = 4
 
     @classmethod
     def setUpClass(cls):
-        """Assemble the processor from local components.
-
-        The mixin's own setup either downloads `model_id` or builds generic components, and neither works
-        here: our marker tokens have to sit at frozen ids, and the only checkpoint that has them is private.
-        """
+        """Assemble the processor from local components (staging checkpoint is private)."""
         cls.tmpdirname = tempfile.mkdtemp()
         processor = cls.processor_class(
-            image_processor=NeoMMEImageProcessor(patch_size=PATCH_SIZE), tokenizer=build_tokenizer()
+            image_processor=NeoMMEImageProcessor(patch_size=cls.patch_size), tokenizer=build_tokenizer()
         )
         cls._setup_test_attributes(processor)
         processor.save_pretrained(cls.tmpdirname)
@@ -304,7 +296,9 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         """A fast tokenizer answers `unk_token_id` for a token it has never seen, so a missing marker used
         to sail through and every document silently opened with `<unk>`."""
         stripped = build_tokenizer(specials=[token for token in SPECIAL_TOKENS if token != "<row>"])
-        processor = NeoMMEProcessor(image_processor=NeoMMEImageProcessor(patch_size=PATCH_SIZE), tokenizer=stripped)
+        processor = NeoMMEProcessor(
+            image_processor=NeoMMEImageProcessor(patch_size=self.patch_size), tokenizer=stripped
+        )
 
         with self.assertRaises(ValueError) as raised:
             processor(text=["hello world"], text_role="document")
@@ -313,8 +307,9 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     def test_image_layout_and_two_axis_positions(self):
         processor = self.get_processor()
         grid_height, grid_width = 2, 3
+        patch_size = self.patch_size
         image = Image.fromarray(
-            np.random.randint(0, 255, (grid_height * PATCH_SIZE, grid_width * PATCH_SIZE, 3), dtype=np.uint8)
+            np.random.randint(0, 255, (grid_height * patch_size, grid_width * patch_size, 3), dtype=np.uint8)
         )
         batch = processor(images=[image])
         ids = batch["input_ids"][0].tolist()
@@ -324,7 +319,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         for _ in range(grid_height):
             expected += [self.marker_ids["<img>"]] * grid_width + [self.marker_ids["<row>"]]
         self.assertEqual(ids, expected)
-        self.assertEqual(batch["pixel_values"].shape, (grid_height * grid_width, 3 * PATCH_SIZE**2))
+        self.assertEqual(batch["pixel_values"].shape, (grid_height * grid_width, 3 * patch_size**2))
         self.assertEqual(batch["image_grid_hw"].tolist(), [[grid_height, grid_width]])
 
         # The two markers take diagonal positions, then the grid starts at (2, 2).
@@ -336,9 +331,10 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     def test_each_image_restarts_its_position_grid(self):
         processor = self.get_processor()
+        patch_size = self.patch_size
         images = [
-            Image.fromarray(np.random.randint(0, 255, (2 * PATCH_SIZE, 3 * PATCH_SIZE, 3), dtype=np.uint8)),
-            Image.fromarray(np.random.randint(0, 255, (PATCH_SIZE, PATCH_SIZE, 3), dtype=np.uint8)),
+            Image.fromarray(np.random.randint(0, 255, (2 * patch_size, 3 * patch_size, 3), dtype=np.uint8)),
+            Image.fromarray(np.random.randint(0, 255, (patch_size, patch_size, 3), dtype=np.uint8)),
         ]
         batch = processor(images=images)
 
