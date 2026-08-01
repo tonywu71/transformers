@@ -29,9 +29,6 @@ if is_vision_available():
     from transformers import NeoMMEImageProcessor, NeoMMEImageProcessorPil
 
 
-PATCH_SIZE = 4
-
-
 class NeoMMEImageProcessingTester:
     def __init__(
         self,
@@ -46,7 +43,7 @@ class NeoMMEImageProcessingTester:
         do_normalize=True,
         image_mean=None,
         image_std=None,
-        patch_size=PATCH_SIZE,
+        patch_size=4,
         max_side=None,
         max_pixels=None,
         min_pixels=None,
@@ -135,7 +132,7 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
     def test_image_processor_from_dict_with_kwargs(self):
         for image_processing_class in self.image_processing_classes.values():
             image_processor = image_processing_class.from_dict(self.image_processor_dict)
-            self.assertEqual(image_processor.patch_size, PATCH_SIZE)
+            self.assertEqual(image_processor.patch_size, self.image_processor_tester.patch_size)
             self.assertIsNone(image_processor.max_side)  # no budget unless asked for: native resolution
 
             image_processor = image_processing_class.from_dict(self.image_processor_dict, patch_size=8, max_side=64)
@@ -202,11 +199,12 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
         """
         image = self.make_image(64, 39)
         one_level = 1 / 127.5
+        patch_size = self.image_processor_tester.patch_size
 
         for budget in ({"max_side": 16}, {"max_pixels": 24 * 24}, {"min_pixels": 128 * 128}):
             with self.subTest(budget=budget):
-                fast = NeoMMEImageProcessor(patch_size=PATCH_SIZE)(images=[image], return_tensors="np", **budget)
-                slow = NeoMMEImageProcessorPil(patch_size=PATCH_SIZE)(images=[image], return_tensors="np", **budget)
+                fast = NeoMMEImageProcessor(patch_size=patch_size)(images=[image], return_tensors="np", **budget)
+                slow = NeoMMEImageProcessorPil(patch_size=patch_size)(images=[image], return_tensors="np", **budget)
 
                 self.assertEqual(fast["image_grid_hw"].tolist(), slow["image_grid_hw"].tolist())
                 self.assertEqual(fast["pixel_values"].shape, slow["pixel_values"].shape)
@@ -214,34 +212,37 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
 
     def test_pixels_are_scaled_to_minus_one_one_and_padding_is_minus_one(self):
         """Padding is added to the RAW image, so padded pixels land at exactly -1 after the rescale."""
-        image = Image.fromarray(np.full((PATCH_SIZE, PATCH_SIZE + 1, 3), 255, dtype=np.uint8))
-        outputs = NeoMMEImageProcessor(patch_size=PATCH_SIZE)(images=[image], return_tensors="np")
+        patch_size = self.image_processor_tester.patch_size
+        image = Image.fromarray(np.full((patch_size, patch_size + 1, 3), 255, dtype=np.uint8))
+        outputs = NeoMMEImageProcessor(patch_size=patch_size)(images=[image], return_tensors="np")
 
         self.assertEqual(outputs["image_grid_hw"].tolist(), [[1, 2]])
-        np.testing.assert_allclose(outputs["pixel_values"][0], np.full(3 * PATCH_SIZE**2, 1.0), atol=1e-6)
+        np.testing.assert_allclose(outputs["pixel_values"][0], np.full(3 * patch_size**2, 1.0), atol=1e-6)
         self.assertAlmostEqual(float(outputs["pixel_values"][1].min()), -1.0, places=6)
 
     def test_patches_are_row_major_with_pixel_channel_last_layout(self):
-        height, width = 2 * PATCH_SIZE, 2 * PATCH_SIZE
+        patch_size = self.image_processor_tester.patch_size
+        height, width = 2 * patch_size, 2 * patch_size
         array = np.random.default_rng(0).integers(0, 255, (height, width, 3), dtype=np.uint8)
-        patches = NeoMMEImageProcessor(patch_size=PATCH_SIZE)(images=[Image.fromarray(array)], return_tensors="np")[
+        patches = NeoMMEImageProcessor(patch_size=patch_size)(images=[Image.fromarray(array)], return_tensors="np")[
             "pixel_values"
         ]
 
-        self.assertEqual(patches.shape, (4, 3 * PATCH_SIZE**2))
+        self.assertEqual(patches.shape, (4, 3 * patch_size**2))
         for patch_index, (row, column) in enumerate([(0, 0), (0, 1), (1, 0), (1, 1)]):
-            block = array[row * PATCH_SIZE : (row + 1) * PATCH_SIZE, column * PATCH_SIZE : (column + 1) * PATCH_SIZE]
+            block = array[row * patch_size : (row + 1) * patch_size, column * patch_size : (column + 1) * patch_size]
             np.testing.assert_allclose(patches[patch_index], block.reshape(-1) / 127.5 - 1.0, atol=1e-6)
 
     def test_no_resize_by_default_and_the_budgets_bound_the_grid(self):
+        patch_size = self.image_processor_tester.patch_size
         image = self.make_image(64, 32)
-        processor = NeoMMEImageProcessor(patch_size=PATCH_SIZE)
+        processor = NeoMMEImageProcessor(patch_size=patch_size)
 
         self.assertEqual(processor(images=[image], return_tensors="np")["image_grid_hw"].tolist(), [[16, 8]])
         capped = processor(images=[image], max_side=16, return_tensors="np")
         self.assertEqual(capped["image_grid_hw"].tolist(), [[4, 2]])
         # max_side only ever shrinks; min_pixels is the one setting that grows an image.
-        small = self.make_image(PATCH_SIZE, PATCH_SIZE)
+        small = self.make_image(patch_size, patch_size)
         self.assertEqual(
             processor(images=[small], max_side=1024, return_tensors="np")["image_grid_hw"].tolist(), [[1, 1]]
         )
@@ -252,7 +253,7 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
     def test_the_caps_clamp_the_min_pixels_floor(self):
         """A cap beats the floor. The floor used to ASSIGN the scale, so setting `min_pixels` next to a cap
         silently discarded the cap and emitted a grid several times over budget."""
-        processor = NeoMMEImageProcessor(patch_size=PATCH_SIZE)
+        processor = NeoMMEImageProcessor(patch_size=self.image_processor_tester.patch_size)
         image = self.make_image(64, 32)
 
         for cap in ({"max_side": 16}, {"max_pixels": 64 * 32 // 4}):
@@ -268,7 +269,7 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
         self.assertEqual(grid["image_grid_hw"].tolist(), [[2, 2]])
 
     def test_get_number_of_image_patches_matches_the_emitted_grid(self):
-        processor = NeoMMEImageProcessor(patch_size=PATCH_SIZE)
+        processor = NeoMMEImageProcessor(patch_size=self.image_processor_tester.patch_size)
         for height, width, kwargs in [(9, 13, {}), (64, 32, {"max_side": 16}), (4, 4, {"min_pixels": 256})]:
             outputs = processor(images=[self.make_image(height, width)], return_tensors="np", **kwargs)
             expected = int(np.prod(outputs["image_grid_hw"][0]))
