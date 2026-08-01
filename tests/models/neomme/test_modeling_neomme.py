@@ -256,6 +256,11 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     def test_sdpa_can_dispatch_on_flash(self):
         pass
 
+    def test_attention_pattern_required(self):
+        """At least one of `layer_types` or `global_attn_every_n_layers` must be set."""
+        with self.assertRaises(ValueError):
+            NeoMMEConfig(layer_types=None, global_attn_every_n_layers=None)
+
     def test_layer_types_stride_mismatch(self):
         """`layer_types` is what gets serialized, so it must never silently contradict the stride."""
         base = {"num_hidden_layers": 3, "global_attn_every_n_layers": 3}
@@ -513,6 +518,14 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         torch.testing.assert_close(
             embeddings[real].norm(dim=-1), torch.ones_like(embeddings[real][:, 0]), rtol=1e-4, atol=1e-4
         )
+
+    def test_dense_dim_out_of_range(self):
+        """`dense_dim` must be in 1..hidden_size; invalid widths used to be sliced silently."""
+        config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
+        model = NeoMMEForRetrieval(config).to(torch_device).eval()
+        for dense_dim in (0, -1, config.hidden_size + 1):
+            with self.subTest(dense_dim=dense_dim), self.assertRaises(ValueError):
+                model(input_ids=input_ids, attention_mask=input_mask, dense_dim=dense_dim)
 
     def test_dense_head_truncation(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
