@@ -139,8 +139,6 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
             self.assertEqual(image_processor.patch_size, 8)
             self.assertEqual(image_processor.max_side, 64)
 
-    # --- the three call tests, overridden because `pixel_values` is flat rather than batched ---
-
     def _check_call(self, image_inputs) -> None:
         """Assert single and batched image-processor outputs for NeoMME's flat patch table."""
         for image_processing_class in self.image_processing_classes.values():
@@ -185,8 +183,6 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
     @unittest.skip(reason="NeoMME is RGB-only: a 4-channel input is converted, so the patch width is always 3 * p^2")
     def test_call_numpy_4_channels(self):
         pass
-
-    # --- NeoMME-specific behaviour, kept from the hand-written suite ---
 
     def make_image(self, height: int, width: int) -> "Image.Image":
         rng = np.random.default_rng(0)

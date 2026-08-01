@@ -89,8 +89,6 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     def marker_ids(self) -> dict[str, int]:
         return {token: index for index, token in enumerate(SPECIAL_TOKENS)}
 
-    # --- mixin tests that do not apply, with the reason ---
-
     @unittest.skip(reason="NeoMMEProcessor takes exactly one of text or images: they are opposite retrieval sides")
     def test_processor_with_multiple_inputs(self):
         pass
@@ -106,8 +104,6 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     @unittest.skip(reason="the chat template is text-only; the image grid is laid out by the image processor")
     def test_apply_chat_template_image(self):
         pass
-
-    # --- mixin kwargs tests, rewritten for one modality per call (the ColQwen2 pattern) ---
 
     def test_tokenizer_defaults_preserved_by_kwargs(self):
         processor_components = self.prepare_components()
@@ -218,8 +214,6 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         inputs = processor(images=self.prepare_image_inputs())
         self.assertSetEqual(set(inputs.keys()), set(processor.model_input_names))
 
-    # --- the kwargs contract itself ---
-
     def test_padding_and_return_tensors_are_honoured(self):
         """These used to be dropped: the text path read only `max_length` out of the merged kwargs."""
         processor = self.get_processor()
@@ -262,8 +256,6 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
             processor(text=["hello"], padding_side="left")
         with self.assertRaises(ValueError):
             processor(text=["hello"], text_kwargs={"padding_side": "left"})
-
-    # --- NeoMME-specific behaviour ---
 
     def test_queries_get_the_marker_and_the_mask_expansion(self):
         processor = self.get_processor()
