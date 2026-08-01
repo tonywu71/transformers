@@ -142,6 +142,7 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
     # --- the three call tests, overridden because `pixel_values` is flat rather than batched ---
 
     def _check_call(self, image_inputs) -> None:
+        """Assert single and batched image-processor outputs for NeoMME's flat patch table."""
         for image_processing_class in self.image_processing_classes.values():
             image_processing = image_processing_class(**self.image_processor_dict)
 
