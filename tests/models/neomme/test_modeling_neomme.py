@@ -91,13 +91,13 @@ class NeoMMEModelTester:
         embedding_rank=16,
         hidden_size=32,
         intermediate_size=48,
-        num_hidden_layers=4,
+        num_hidden_layers=2,
         num_attention_heads=4,
         num_key_value_heads=2,
         # 16, not 8: the default `partial_rotary_factor` of 0.25 has to leave a multiple of 4 rotating dims
         # on full-attention layers (4 here), which is also the smallest width that exercises both M-RoPE axes.
         head_dim=16,
-        global_attn_every_n_layers=3,
+        global_attn_every_n_layers=2,
         sliding_window_short=3,
         sliding_window_long=6,
         patch_size=4,
@@ -139,27 +139,29 @@ class NeoMMEModelTester:
         self.query_token_id = query_token_id
         self.row_token_id = row_token_id
 
-    def get_config(self):
-        config = NeoMMEConfig(
-            vocab_size=self.vocab_size,
-            embedding_rank=self.embedding_rank,
-            hidden_size=self.hidden_size,
-            intermediate_size=self.intermediate_size,
-            num_hidden_layers=self.num_hidden_layers,
-            num_attention_heads=self.num_attention_heads,
-            num_key_value_heads=self.num_key_value_heads,
-            head_dim=self.head_dim,
-            global_attn_every_n_layers=self.global_attn_every_n_layers,
-            sliding_window_short=self.sliding_window_short,
-            sliding_window_long=self.sliding_window_long,
-            patch_size=self.patch_size,
-            embedding_dim=self.embedding_dim,
-            max_position_embeddings=self.max_position_embeddings,
-            initializer_range=self.initializer_range,
-            pad_token_id=self.pad_token_id,
-            document_token_id=self.document_token_id,
-            image_token_id=self.image_token_id,
-        )
+    def get_config(self, **kwargs):
+        config_kwargs = {
+            "vocab_size": self.vocab_size,
+            "embedding_rank": self.embedding_rank,
+            "hidden_size": self.hidden_size,
+            "intermediate_size": self.intermediate_size,
+            "num_hidden_layers": self.num_hidden_layers,
+            "num_attention_heads": self.num_attention_heads,
+            "num_key_value_heads": self.num_key_value_heads,
+            "head_dim": self.head_dim,
+            "global_attn_every_n_layers": self.global_attn_every_n_layers,
+            "sliding_window_short": self.sliding_window_short,
+            "sliding_window_long": self.sliding_window_long,
+            "patch_size": self.patch_size,
+            "embedding_dim": self.embedding_dim,
+            "max_position_embeddings": self.max_position_embeddings,
+            "initializer_range": self.initializer_range,
+            "pad_token_id": self.pad_token_id,
+            "document_token_id": self.document_token_id,
+            "image_token_id": self.image_token_id,
+        }
+        config_kwargs.update(kwargs)
+        config = NeoMMEConfig(**config_kwargs)
         if test := os.environ.get("PYTEST_CURRENT_TEST", None):
             test_name = test.split(":")[-1].split(" ")[0]
             # Only the eager attention path can return attention probabilities.
@@ -263,25 +265,25 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
 
     def test_layer_types_disagreeing_with_the_stride_raises(self):
         """`layer_types` is what gets serialized, so it must never silently contradict the stride."""
-        base = {"num_hidden_layers": 4, "global_attn_every_n_layers": 3}
+        base = {"num_hidden_layers": 3, "global_attn_every_n_layers": 3}
         with self.assertRaises(ValueError):
-            NeoMMEConfig(**base, layer_types=["sliding_attention"] * 4)
+            NeoMMEConfig(**base, layer_types=["sliding_attention"] * 3)
         with self.assertRaises(ValueError):  # one entry short
-            NeoMMEConfig(**base, layer_types=["sliding_attention"] * 2 + ["full_attention"])
+            NeoMMEConfig(**base, layer_types=["sliding_attention"] + ["full_attention"])
         with self.assertRaises(ValueError):  # not a known layer type
-            NeoMMEConfig(**base, layer_types=["sliding_attention", "gdn", "full_attention", "full_attention"])
+            NeoMMEConfig(**base, layer_types=["sliding_attention", "gdn", "full_attention"])
 
         # A hand-written pattern no stride can produce is legal once the stride is disowned.
-        pattern = ["sliding_attention", "sliding_attention", "sliding_attention", "full_attention"]
-        config = NeoMMEConfig(num_hidden_layers=4, global_attn_every_n_layers=None, layer_types=pattern)
+        pattern = ["sliding_attention", "sliding_attention", "full_attention"]
+        config = NeoMMEConfig(num_hidden_layers=3, global_attn_every_n_layers=None, layer_types=pattern)
         self.assertEqual(config.layer_types, pattern)
 
     def test_the_two_window_widths_are_validated(self):
         """One band width is two equal widths, not a magic `sliding_window_long = 0`. The research config
         uses zero for 'uniform', and a zero half-width here would mean a diagonal-only band."""
-        base = {"num_hidden_layers": 4, "global_attn_every_n_layers": 3}
+        # Three layers with stride 3: [sliding, sliding, global] — enough to alternate short/long.
+        base = {"num_hidden_layers": 3, "global_attn_every_n_layers": 3}
         uniform = NeoMMEConfig(**base, sliding_window_short=256, sliding_window_long=256)
-        # Stride 3 over 4 layers leaves two sliding layers, which would alternate short/long.
         self.assertEqual([w for w in uniform.layer_window_sizes if w is not None], [256, 256])
         for short, long in ((256, 0), (256, 128), (0, 256)):
             with self.subTest(short=short, long=long), self.assertRaises(ValueError):
@@ -296,7 +298,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertEqual(list(NeoMMEConfig(num_hidden_layers=1).rope_parameters), ["full_attention"])
         self.assertEqual(list(NeoMMEConfig(global_attn_every_n_layers=1).rope_parameters), ["full_attention"])
         sliding_only = NeoMMEConfig(
-            num_hidden_layers=4, global_attn_every_n_layers=None, layer_types=["sliding_attention"] * 4
+            num_hidden_layers=2, global_attn_every_n_layers=None, layer_types=["sliding_attention"] * 2
         )
         self.assertEqual(list(sliding_only.rope_parameters), ["sliding_attention"])
 
@@ -342,7 +344,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertEqual(reloaded.rope_parameters, config.rope_parameters)
 
     def test_sliding_windows_alternate_by_sliding_layer_ordinal(self):
-        config = self.model_tester.get_config()
+        # Three layers [sliding, sliding, global]: both short/long widths plus the always-global last layer.
+        config = self.model_tester.get_config(num_hidden_layers=3, global_attn_every_n_layers=3)
         windows = [window for window in config.layer_window_sizes if window is not None]
         expected = [
             config.sliding_window_long if index % 2 else config.sliding_window_short for index in range(len(windows))
@@ -360,7 +363,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         straight off `output_attentions`: the upper triangle must be populated (nothing causal), and a
         sliding layer must be zero outside `abs(i - j) <= window`.
         """
-        config = self.model_tester.get_config()
+        # Three layers so both short and long sliding bands are checked, not only the default [S, G] stack.
+        config = self.model_tester.get_config(num_hidden_layers=3, global_attn_every_n_layers=3)
         config._attn_implementation = "eager"  # only the eager path returns attention probabilities
         model = NeoMMEModel(config).to(torch_device).eval()
 
