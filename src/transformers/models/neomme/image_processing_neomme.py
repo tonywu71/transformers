@@ -60,9 +60,15 @@ def convert_image_to_patches(image: "torch.Tensor", patch_size: int) -> "torch.T
     num_channels, height, width = image.shape
     num_patches_height = height // patch_size
     num_patches_width = width // patch_size
-    patches = image.reshape(num_channels, num_patches_height, patch_size, num_patches_width, patch_size)
-    patches = patches.permute(1, 3, 2, 4, 0)
-    return patches.reshape(num_patches_height * num_patches_width, -1)
+    patches = image.reshape(
+        num_channels, num_patches_height, patch_size, num_patches_width, patch_size
+    )  # (num_channels, num_patches_height, patch_size, num_patches_width, patch_size)
+    patches = patches.permute(
+        1, 3, 2, 4, 0
+    )  # (num_patches_height, num_patches_width, patch_size, patch_size, num_channels)
+    return patches.reshape(
+        num_patches_height * num_patches_width, -1
+    )  # (num_patches, patch_size * patch_size * num_channels)
 
 
 class NeoMMEImageProcessorKwargs(ImagesKwargs, total=False):
@@ -153,13 +159,15 @@ class NeoMMEImageProcessor(TorchvisionBackend):
 
             image = self.rescale_and_normalize(image, do_rescale, rescale_factor, do_normalize, image_mean, image_std)
 
-            pixel_values.append(convert_image_to_patches(image, patch_size))
+            pixel_values.append(
+                convert_image_to_patches(image, patch_size)
+            )  # (num_patches_i, 3 * patch_size ** 2)
             image_grid_hw.append((grid_height, grid_width))
 
         return BatchFeature(
             data={
-                "pixel_values": torch.cat(pixel_values, dim=0),
-                "image_grid_hw": torch.tensor(image_grid_hw, dtype=torch.int64),
+                "pixel_values": torch.cat(pixel_values, dim=0),  # (num_patches, 3 * patch_size ** 2)
+                "image_grid_hw": torch.tensor(image_grid_hw, dtype=torch.int64),  # (batch_size, 2)
             },
             tensor_type=return_tensors,
         )
@@ -202,6 +210,7 @@ class NeoMMEImageProcessor(TorchvisionBackend):
         pad_width = grid_width * patch_size - width
         if pad_height or pad_width:
             image = tvF.pad(image, [0, 0, pad_width, pad_height], fill=0)
+        # image: (num_channels, grid_height * patch_size, grid_width * patch_size)
         return image, grid_height, grid_width
 
 
