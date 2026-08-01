@@ -24,6 +24,7 @@ from ...utils import auto_docstring, logging
 logger = logging.get_logger(__name__)
 
 
+# TODO: set checkpoint= to the public Hub id before release (needed by check_config_docstrings).
 @auto_docstring
 @strict
 class NeoMMEConfig(PreTrainedConfig):

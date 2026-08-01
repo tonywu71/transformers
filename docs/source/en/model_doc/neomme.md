@@ -59,6 +59,7 @@ from PIL import Image
 from transformers import NeoMMEForRetrieval, NeoMMEProcessor
 
 
+# TODO: confirm the public Hub id before release.
 processor = NeoMMEProcessor.from_pretrained("Hcompany/neomme-retrieval")
 model = NeoMMEForRetrieval.from_pretrained("Hcompany/neomme-retrieval", device_map="auto")
 

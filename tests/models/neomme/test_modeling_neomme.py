@@ -538,12 +538,12 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertTrue((output.multivector_embeddings[0] == 0).all())
 
 
-# NOTE: `Hcompany/neomme-250M-retrieval-dev-transformers-v0.3` is a PRIVATE staging repo, so these tests
-# need Hub credentials with access to it. Repoint them at the public checkpoint at release.
+# TODO: repoint at the public Hub checkpoint before release (this staging repo is private).
 @slow
 @require_torch
 @require_vision
 class NeoMMEModelIntegrationTest(unittest.TestCase):
+    # TODO: replace with the public model id before release.
     model_name: ClassVar[str] = "Hcompany/neomme-250M-retrieval-dev-transformers-v0.3"
     # Parity is only ever gated in float32; bf16 drift is documented separately and never asserted on.
     model_dtype: ClassVar["torch.dtype"] = torch.float32 if is_torch_available() else None
