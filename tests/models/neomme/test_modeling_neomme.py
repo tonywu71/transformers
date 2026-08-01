@@ -38,20 +38,15 @@ if is_torch_available():
         NeoMMEMLP,
         NeoMMEPreTrainedModel,
         NeoMMEValueEmbeddings,
+        apply_interleaved_rotary_pos_emb,
     )
 
 
-def _give_the_residual_branches_weight(test_case: unittest.TestCase) -> None:
-    """Patch `_init_weights` for the duration of `test_case` so a freshly built model is not an identity.
+def _patch_residual_init(test_case: unittest.TestCase) -> None:
+    """Give residual branches nonzero init so inherited output-comparison tests are not vacuously true.
 
-    NeoMME starts every residual branch at exactly zero — `o_proj`, `down_proj`, the XSA `alpha` and the
-    value-embedding table — mirroring the research init. A model built from the config alone is therefore a
-    bitwise identity on the embedding stream: scrambling `q_proj`, `kv_proj`, `up_proj`, `output_gate` and
-    `lambdas` leaves `last_hidden_state` unchanged to the last bit. Every inherited test that compares
-    outputs (eager vs sdpa, padded vs unpadded batch, flash-attention equivalence, torch.compile) would
-    then pass whatever the trunk computes. Standard fan-in init on those four tensors is enough to make the
-    comparisons bite. The `init.*` helpers skip anything a checkpoint already carries, so this only ever
-    touches weights that would otherwise be born zero.
+    NeoMME zeroes `o_proj`, `down_proj`, XSA `alpha`, and value embeddings at init, so a fresh model is an
+    identity on the embedding stream unless those tensors are refilled.
     """
     initialize = NeoMMEPreTrainedModel._init_weights
 
@@ -68,9 +63,7 @@ def _give_the_residual_branches_weight(test_case: unittest.TestCase) -> None:
         elif isinstance(module, NeoMMEValueEmbeddings):
             init.normal_(module.weight, mean=0.0, std=module.weight.shape[-1] ** -0.5)
         elif isinstance(module, NeoMMEEncoderLayer):
-            # `lambdas` is born `[1.0, 0.0]`, so the `x0` shortcut it gates contributes exactly nothing and
-            # deleting the mix outright is invisible. Unlike the tensors above it is only PARTLY zero, which
-            # is why an is-it-all-zero refill misses it.
+            # `lambdas` is born `[1.0, 0.0]`; only partly zero, so an all-zero refill would miss it.
             init.copy_(module.lambdas, torch.tensor([1.0, 0.5]))
 
     patcher = patch.object(NeoMMEPreTrainedModel, "_init_weights", initialize_with_live_residual_branches)
@@ -221,14 +214,14 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     test_pruning = False
     test_head_masking = False
     # The common batch is text-only, so the vision stem legitimately receives no gradient. The dedicated
-    # `test_patch_stem_receives_gradients_from_images` covers it instead.
+    # `test_patch_stem_gradients` covers it instead.
     test_all_params_have_gradient = False
     model_split_percents = [0.5, 0.8, 0.9]
 
     def setUp(self):
         self.model_tester = NeoMMEModelTester(self)
         self.config_tester = ConfigTester(self, config_class=NeoMMEConfig)
-        _give_the_residual_branches_weight(self)
+        _patch_residual_init(self)
 
     def test_config(self):
         self.config_tester.run_common_tests()
@@ -263,7 +256,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     def test_sdpa_can_dispatch_on_flash(self):
         pass
 
-    def test_layer_types_disagreeing_with_the_stride_raises(self):
+    def test_layer_types_stride_mismatch(self):
         """`layer_types` is what gets serialized, so it must never silently contradict the stride."""
         base = {"num_hidden_layers": 3, "global_attn_every_n_layers": 3}
         with self.assertRaises(ValueError):
@@ -278,9 +271,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         config = NeoMMEConfig(num_hidden_layers=3, global_attn_every_n_layers=None, layer_types=pattern)
         self.assertEqual(config.layer_types, pattern)
 
-    def test_the_two_window_widths_are_validated(self):
-        """One band width is two equal widths, not a magic `sliding_window_long = 0`. The research config
-        uses zero for 'uniform', and a zero half-width here would mean a diagonal-only band."""
+    def test_window_widths_validated(self):
+        """One band is two equal widths; research used `sliding_window_long = 0` for 'uniform'."""
         # Three layers with stride 3: [sliding, sliding, global] — enough to alternate short/long.
         base = {"num_hidden_layers": 3, "global_attn_every_n_layers": 3}
         uniform = NeoMMEConfig(**base, sliding_window_short=256, sliding_window_long=256)
@@ -290,11 +282,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
                 NeoMMEConfig(**base, sliding_window_short=short, sliding_window_long=long)
 
     def test_rope_parameters_follow_layer_types(self):
-        """A homogeneous pattern is legal, and only the layer types in use get rope parameters.
-
-        Keying rope on a layer type the model does not have sends `standardize_rope_params` down its
-        single-global-dict branch, which writes flat keys the annotation then rejects.
-        """
+        """Only layer types present in the pattern get rope parameters."""
         self.assertEqual(list(NeoMMEConfig(num_hidden_layers=1).rope_parameters), ["full_attention"])
         self.assertEqual(list(NeoMMEConfig(global_attn_every_n_layers=1).rope_parameters), ["full_attention"])
         sliding_only = NeoMMEConfig(
@@ -302,9 +290,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         )
         self.assertEqual(list(sliding_only.rope_parameters), ["sliding_attention"])
 
-    def test_a_flat_rope_theta_reaches_every_layer_type(self):
-        """`rope_theta` is the standard knob, so it must not be dropped in favour of the defaults, nor
-        survive into `config.json` as a field nothing reads."""
+    def test_flat_rope_theta(self):
+        """Flat `rope_theta` reaches every layer type and is not written back to `config.json`."""
         config = NeoMMEConfig(rope_theta=123456.0)
         self.assertEqual(
             {layer_type: params["rope_theta"] for layer_type, params in config.rope_parameters.items()},
@@ -316,10 +303,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertEqual(explicit.rope_parameters["sliding_attention"]["rope_theta"], 7.0)
         self.assertEqual(explicit.rope_parameters["full_attention"]["rope_theta"], 123456.0)
 
-    def test_a_partial_rotary_factor_that_does_not_divide_by_four_is_refused(self):
-        """The two M-RoPE axes take alternating frequency pairs, so the rotating dims divide by 2 twice.
-        This used to be rounded down inside the model, which built a working model whose spectrum was
-        narrower than its config said — at `head_dim=8` with the default 0.25, silently zero rotary dims."""
+    def test_partial_rotary_factor_multiple_of_four(self):
+        """Rotating dims must be a multiple of 4 (two M-RoPE axes × pairs); used to silently round down."""
         with self.assertRaisesRegex(ValueError, "not a multiple of 4"):
             NeoMMEConfig(head_dim=8)
         with self.assertRaisesRegex(ValueError, "not a multiple of 4"):
@@ -328,14 +313,13 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         config = NeoMMEConfig(head_dim=64, rope_parameters={"full_attention": {"partial_rotary_factor": 0.75}})
         self.assertEqual(config.rope_parameters["full_attention"]["partial_rotary_factor"], 0.75)
 
-    def test_a_partial_rotary_factor_outside_the_unit_interval_is_refused(self):
-        """Above 1.0 the rotary slice is wider than the head and attention dies on a shape error; at 0 there
-        is no rotation and positions vanish with no complaint."""
+    def test_partial_rotary_factor_unit_interval(self):
+        """`partial_rotary_factor` must lie in (0, 1]."""
         for factor in (2.0, 0.0, -0.25):
             with self.assertRaisesRegex(ValueError, r"outside \(0.0, 1.0\]"):
                 NeoMMEConfig(rope_parameters={"sliding_attention": {"partial_rotary_factor": factor}})
 
-    def test_config_round_trips_through_a_dict(self):
+    def test_config_dict_roundtrip(self):
         config = self.model_tester.get_config()
         reloaded = NeoMMEConfig.from_dict(config.to_dict())
 
@@ -343,7 +327,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertEqual(reloaded.layer_window_sizes, config.layer_window_sizes)
         self.assertEqual(reloaded.rope_parameters, config.rope_parameters)
 
-    def test_sliding_windows_alternate_by_sliding_layer_ordinal(self):
+    def test_sliding_windows_alternate(self):
         # Three layers [sliding, sliding, global]: both short/long widths plus the always-global last layer.
         config = self.model_tester.get_config(num_hidden_layers=3, global_attn_every_n_layers=3)
         windows = [window for window in config.layer_window_sizes if window is not None]
@@ -356,13 +340,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
             [layer_type == "full_attention" for layer_type in config.layer_types],
         )
 
-    def test_every_layer_attends_bidirectionally_within_its_window(self):
-        """No layer may be causal, and each sliding layer's band must be exactly its half-width.
-
-        Post-softmax weights are exactly 0 where the mask forbids attention, so this reads the pattern
-        straight off `output_attentions`: the upper triangle must be populated (nothing causal), and a
-        sliding layer must be zero outside `abs(i - j) <= window`.
-        """
+    def test_bidirectional_attention_windows(self):
+        """Each layer is bidirectional; sliding layers are zero outside `abs(i - j) <= window`."""
         # Three layers so both short and long sliding bands are checked, not only the default [S, G] stack.
         config = self.model_tester.get_config(num_hidden_layers=3, global_attn_every_n_layers=3)
         config._attn_implementation = "eager"  # only the eager path returns attention probabilities
@@ -390,7 +369,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
                 if upper.any():
                     self.assertTrue((attention[0, :, upper] > 0).all(), "layer is causal")
 
-    def test_patch_embeddings_are_scattered_correctly(self):
+    def test_patch_embedding_scatter(self):
         """The `<img>` marker after `<doc>` must not consume a patch; multi-image rows scatter in order."""
         config = self.model_tester.get_config()
         model = NeoMMEModel(config).to(torch_device).eval()
@@ -427,9 +406,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
             untouched = [i for i in range(len(sequence)) if i not in patch_positions]
             torch.testing.assert_close(scattered[0, untouched], inputs_embeds[0, untouched])
 
-    def test_the_image_path_compiles_with_a_full_graph(self):
-        """For a document retriever the image path is the path, and it used to break `fullgraph=True`:
-        counting the patch placeholders reads a value only the runtime knows."""
+    def test_image_path_torch_compile(self):
+        """Image path must compile under `fullgraph=True` (patch-count used to be data-dependent)."""
         config = self.model_tester.get_config()
         config._attn_implementation = "sdpa"
         model = NeoMMEModel(config).to(torch_device).eval()
@@ -451,10 +429,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertEqual(NeoMMEForMaskedLM(config).num_parameters(), NeoMMEModel(config).num_parameters())
         self.assertIsNone(NeoMMEForMaskedLM(config).get_output_embeddings())
 
-    def test_rotary_embedding_is_interleaved_and_partial(self):
-        """The rotation must act on interleaved pairs and leave the NoPE tail untouched."""
-        from transformers.models.neomme.modeling_neomme import apply_interleaved_rotary_pos_emb
-
+    def test_interleaved_partial_rotary(self):
+        """Rotation acts on interleaved pairs and leaves the NoPE tail untouched."""
         head_dim, rotary_dim = 8, 4
         states = torch.arange(head_dim, dtype=torch.float32).view(1, 1, 1, head_dim)
         # A quarter turn on both axes: cos = 0, sin = 1 -> (x0, x1) becomes (-x1, x0).
@@ -463,7 +439,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         rotated = apply_interleaved_rotary_pos_emb(states, cos, sin, rotary_dim)
         torch.testing.assert_close(rotated.flatten(), torch.tensor([-1.0, 0.0, -3.0, 2.0, 4.0, 5.0, 6.0, 7.0]))
 
-    def test_patch_stem_receives_gradients_from_images(self):
+    def test_patch_stem_gradients(self):
         config, input_ids, pixel_values = self.model_tester.prepare_image_config_and_inputs()
         model = NeoMMEForMaskedLM(config).to(torch_device).train()
         input_ids, pixel_values = input_ids.to(torch_device), pixel_values.to(torch_device)
@@ -473,7 +449,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
             self.assertIsNotNone(parameter.grad, f"patch_embeddings.{name} received no gradient")
             self.assertGreater(parameter.grad.abs().sum().item(), 0.0)
 
-    def test_short_row_in_a_long_batch_stays_finite(self):
+    def test_padded_row_stays_finite(self):
         """The sliding band intersected with padding can leave a padding query row with no key."""
         config = self.model_tester.get_config()
         model = NeoMMEModel(config).to(torch_device).eval()
@@ -485,7 +461,7 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         output = model(input_ids=input_ids, attention_mask=attention_mask)
         self.assertTrue(torch.isfinite(output.last_hidden_state).all())
 
-    def test_two_axis_position_ids_match_the_expanded_one_axis_form(self):
+    def test_two_axis_position_ids(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         model = NeoMMEModel(config).to(torch_device).eval()
         one_axis = torch.arange(input_ids.shape[1], device=torch_device).expand(input_ids.shape[0], -1)
@@ -513,7 +489,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
     def setUp(self):
         self.model_tester = NeoMMEModelTester(self, is_training=False)
         self.config_tester = ConfigTester(self, config_class=NeoMMEConfig)
-        _give_the_residual_branches_weight(self)
+        _patch_residual_init(self)
 
     @unittest.skip(
         reason="every NeoMME layer passes a 4-D mask; SDPA's flash kernel rejects masks. The real flash path "
@@ -526,7 +502,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
     def test_for_retrieval(self):
         self.model_tester.create_and_check_for_retrieval(*self.model_tester.prepare_config_and_inputs())
 
-    def test_multivector_head_zeroes_padding_and_normalizes(self):
+    def test_multivector_padding_and_norm(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         input_mask[0, 3:] = 0
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
@@ -538,7 +514,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
             embeddings[real].norm(dim=-1), torch.ones_like(embeddings[real][:, 0]), rtol=1e-4, atol=1e-4
         )
 
-    def test_dense_head_truncates_before_normalizing(self):
+    def test_dense_head_truncation(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
         full = model(input_ids=input_ids, attention_mask=input_mask).dense_embeddings
@@ -549,7 +525,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         # Truncating a unit vector's prefix and renormalizing is NOT the same as slicing the full vector.
         self.assertFalse(torch.allclose(truncated, full[:, :8], atol=1e-3))
 
-    def test_retrieval_heads_can_be_selected_individually(self):
+    def test_retrieval_head_selection(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
 
@@ -558,7 +534,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         with self.assertRaises(ValueError):
             model(input_ids=input_ids, output_dense=False, output_multivector=False)
 
-    def test_fully_padded_row_pools_to_a_finite_vector(self):
+    def test_fully_padded_row_pooling(self):
         """A row with no real token must not turn into NaN through the pooler's softmax."""
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         input_mask[0] = 0
@@ -591,8 +567,7 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Load the checkpoint and the dataset once for the class: `setUp` runs per test method, so doing
-        this there pulled 250M parameters and the dataset four times to run four tests."""
+        """Load checkpoint and dataset once for the class (not per test method)."""
         cls.processor = NeoMMEProcessor.from_pretrained(cls.model_name)
         cls.model = NeoMMEForRetrieval.from_pretrained(cls.model_name, dtype=cls.model_dtype)
         cls.model = cls.model.to(torch_device).eval()
@@ -607,8 +582,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
     def tearDown(self):
         cleanup(torch_device, gc_collect=True)
 
-    def test_multivector_head_retrieves_matching_image_documents(self):
-        """MaxSim multivector head: every query's best match is its own image document."""
+    def test_multivector_image_retrieval(self):
+        """MaxSim: each query ranks its own image document first."""
         queries, images = self._embed_image_pair(head="multivector")
         self._assert_diagonal_retrieval(
             self.processor.score_retrieval(queries, images),
@@ -619,8 +594,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
             ],
         )
 
-    def test_dense_head_retrieves_matching_image_documents(self):
-        """Latent-attention dense head: same diagonal retrieval on image documents, scored by cosine."""
+    def test_dense_image_retrieval(self):
+        """Dense cosine: each query ranks its own image document first."""
         queries, images = self._embed_image_pair(head="dense")
 
         self.assertEqual(images.shape, (len(self.dataset), self.model.config.hidden_size))
@@ -634,8 +609,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
             ],
         )
 
-    def test_multivector_head_retrieves_matching_text_documents(self):
-        """MaxSim multivector head: every query beats its matching text document."""
+    def test_multivector_text_retrieval(self):
+        """MaxSim: each query ranks its own text document first."""
         queries, documents = self._embed_text_pair(head="multivector")
         self._assert_diagonal_retrieval(
             self.processor.score_retrieval(queries, documents),
@@ -645,8 +620,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
             ],
         )
 
-    def test_dense_head_retrieves_matching_text_documents(self):
-        """Latent-attention dense head: same diagonal retrieval on text documents, scored by cosine."""
+    def test_dense_text_retrieval(self):
+        """Dense cosine: each query ranks its own text document first."""
         queries, documents = self._embed_text_pair(head="dense")
 
         torch.testing.assert_close(documents.norm(dim=-1), torch.ones_like(documents[:, 0]), rtol=1e-3, atol=1e-3)
