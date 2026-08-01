@@ -213,7 +213,6 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     # The common batch is text-only, so the vision stem legitimately receives no gradient. The dedicated
     # `test_patch_stem_gradients` covers it instead.
     test_all_params_have_gradient = False
-    model_split_percents = [0.5, 0.8, 0.9]
 
     def setUp(self):
         self.model_tester = NeoMMEModelTester(self)
