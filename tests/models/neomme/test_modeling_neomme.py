@@ -13,7 +13,6 @@
 # limitations under the License.
 """Testing suite for the PyTorch NeoMME model."""
 
-import os
 import unittest
 from typing import ClassVar
 from unittest.mock import patch
@@ -151,17 +150,7 @@ class NeoMMEModelTester:
             "image_token_id": self.image_token_id,
         }
         config_kwargs.update(kwargs)
-        config = NeoMMEConfig(**config_kwargs)
-        if test := os.environ.get("PYTEST_CURRENT_TEST", None):
-            test_name = test.split(":")[-1].split(" ")[0]
-            # Only the eager attention path can return attention probabilities.
-            if test_name in (
-                "test_attention_outputs",
-                "test_hidden_states_output",
-                "test_retain_grad_hidden_states_attentions",
-            ):
-                config._attn_implementation = "eager"
-        return config
+        return NeoMMEConfig(**config_kwargs)
 
     def prepare_config_and_inputs(self):
         # Keep the ids clear of the frozen special-token block so no text token doubles as a marker.
@@ -208,8 +197,6 @@ class NeoMMEModelTester:
 @require_torch
 class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     all_model_classes = (NeoMMEModel, NeoMMEForMaskedLM) if is_torch_available() else ()
-    test_pruning = False
-    test_head_masking = False
     # The common batch is text-only, so the vision stem legitimately receives no gradient. The dedicated
     # `test_patch_stem_gradients` covers it instead.
     test_all_params_have_gradient = False
@@ -483,9 +470,6 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
     """`NeoMMEForRetrieval` produces embeddings rather than a loss, so it is tested on its own."""
 
     all_model_classes = (NeoMMEForRetrieval,) if is_torch_available() else ()
-    test_pruning = False
-    test_head_masking = False
-    test_all_params_have_gradient = False
 
     def setUp(self):
         self.model_tester = NeoMMEModelTester(self, is_training=False)
