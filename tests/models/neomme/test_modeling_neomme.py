@@ -98,10 +98,8 @@ class NeoMMEModelTester:
         max_position_embeddings=128,
         initializer_range=0.02,
         pad_token_id=0,
-        mask_token_id=4,
         document_token_id=5,
         image_token_id=6,
-        query_token_id=7,
         row_token_id=8,
     ):
         self.parent = parent
@@ -126,10 +124,8 @@ class NeoMMEModelTester:
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
         self.pad_token_id = pad_token_id
-        self.mask_token_id = mask_token_id
         self.document_token_id = document_token_id
         self.image_token_id = image_token_id
-        self.query_token_id = query_token_id
         self.row_token_id = row_token_id
 
     def get_config(self, **kwargs):
@@ -242,8 +238,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     @unittest.skip(
         reason="its per-layer-type `ntk_inv_freq <= original_inv_freq` check reads a layer type the test never "
         "forwards, so it compares two init-time values that differ by 1 ULP: NeoMME's default RoPE keeps the "
-        "research implementation's `theta ** -x`, upstream's dynamic init uses `1.0 / theta ** x`. See "
-        "`port_deviations.md` §10. The three `test_model_rope_scaling_from_config` variants do run."
+        "research implementation's `theta ** -x`, upstream's dynamic init uses `1.0 / theta ** x`. The three "
+        "`test_model_rope_scaling_from_config` variants do run."
     )
     def test_model_rope_scaling_frequencies(self):
         pass
@@ -493,7 +489,6 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
 
     def setUp(self):
         self.model_tester = NeoMMEModelTester(self, is_training=False)
-        self.config_tester = ConfigTester(self, config_class=NeoMMEConfig)
         _patch_residual_init(self)
 
     @unittest.skip(
