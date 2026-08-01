@@ -18,7 +18,9 @@ import unittest
 
 import numpy as np
 
-from transformers.testing_utils import require_torch, require_vision
+from parameterized import parameterized
+
+from transformers.testing_utils import require_tokenizers, require_torch, require_vision
 from transformers.utils import is_tokenizers_available, is_torch_available, is_vision_available
 
 from ...test_processing_common import ProcessorTesterMixin
@@ -38,6 +40,7 @@ if is_torch_available():
 
 @require_torch
 @require_vision
+@require_tokenizers
 class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     processor_class = NeoMMEProcessor if is_vision_available() else None
     images_input_name = "pixel_values"
@@ -94,8 +97,9 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     def test_tokenizer_decode_defaults(self):
         pass
 
+    @parameterized.expand([(1, "pt"), (2, "pt")])
     @unittest.skip(reason="the chat template is text-only; the image grid is laid out by the image processor")
-    def test_apply_chat_template_image(self):
+    def test_apply_chat_template_image(self, batch_size, return_tensors):
         pass
 
     def test_tokenizer_defaults_preserved_by_kwargs(self):
