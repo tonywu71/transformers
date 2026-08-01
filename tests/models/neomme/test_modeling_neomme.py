@@ -43,10 +43,11 @@ if is_torch_available():
 
 
 def _patch_residual_init(test_case: unittest.TestCase) -> None:
-    """Give residual branches nonzero init so inherited output-comparison tests are not vacuously true.
+    """Refill NeoMME's zero-init residual exits so mixin output comparisons actually exercise the model.
 
-    NeoMME zeroes `o_proj`, `down_proj`, XSA `alpha`, and value embeddings at init, so a fresh model is an
-    identity on the embedding stream unless those tensors are refilled.
+    NeoMME starts `o_proj`, `down_proj`, XSA `alpha`, and value embeddings at zero, so a fresh model just
+    returns its embeddings. Eager-vs-SDPA and similar checks would then always match. This patch fills those
+    tensors for the duration of `test_case` only.
     """
     initialize = NeoMMEPreTrainedModel._init_weights
 
