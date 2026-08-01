@@ -36,52 +36,51 @@ if is_torch_available():
     import torch
 
 
-# The frozen special-token block: a special's id is its index here.
-SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>", "<mask>", "<doc>", "<img>", "<query>", "<row>"]
-VOCAB_WORDS = ["hello", "world", "a", "document", "query", "text", "lower", "newer"]
-
-
-def build_tokenizer(specials: list[str] | None = None) -> "PreTrainedTokenizerFast":
-    """Whitespace word-level tokenizer with specials at frozen ids 0..8 (built locally, no Hub)."""
-    vocabulary = {token: index for index, token in enumerate(specials if specials is not None else SPECIAL_TOKENS)}
-    for word in VOCAB_WORDS:
-        vocabulary[word] = len(vocabulary)
-
-    backend = Tokenizer(models.WordLevel(vocabulary, unk_token="<unk>"))
-    backend.pre_tokenizer = pre_tokenizers.Whitespace()
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
-        backend.save(handle.name)
-        return PreTrainedTokenizerFast(
-            tokenizer_file=handle.name,
-            pad_token="<pad>",
-            eos_token="<eos>",
-            unk_token="<unk>",
-            mask_token="<mask>",
-            # Only the markers this vocabulary really has: naming one here would add it back.
-            additional_special_tokens=[t for t in ("<doc>", "<img>", "<query>", "<row>") if t in vocabulary],
-        )
-
-
 @require_torch
 @require_vision
 class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     processor_class = NeoMMEProcessor if is_vision_available() else None
     images_input_name = "pixel_values"
     patch_size = 4
+    # Frozen special-token block: each special's id is its index in this list.
+    special_tokens = ["<pad>", "<bos>", "<eos>", "<unk>", "<mask>", "<doc>", "<img>", "<query>", "<row>"]
+
+    @classmethod
+    def _setup_tokenizer(cls, specials: list[str] | None = None) -> "PreTrainedTokenizerFast":
+        """Whitespace word-level tokenizer with specials at frozen ids (built locally, no Hub)."""
+        specials = specials if specials is not None else cls.special_tokens
+        vocab_words = ["hello", "world", "a", "document", "query", "text", "lower", "newer"]
+        vocabulary = {token: index for index, token in enumerate(specials)}
+        for word in vocab_words:
+            vocabulary[word] = len(vocabulary)
+
+        backend = Tokenizer(models.WordLevel(vocabulary, unk_token="<unk>"))
+        backend.pre_tokenizer = pre_tokenizers.Whitespace()
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            backend.save(handle.name)
+            return PreTrainedTokenizerFast(
+                tokenizer_file=handle.name,
+                pad_token="<pad>",
+                eos_token="<eos>",
+                unk_token="<unk>",
+                mask_token="<mask>",
+                # Only the markers this vocabulary really has: naming one here would add it back.
+                additional_special_tokens=[t for t in ("<doc>", "<img>", "<query>", "<row>") if t in vocabulary],
+            )
 
     @classmethod
     def setUpClass(cls):
         """Assemble the processor from local components (staging checkpoint is private)."""
         cls.tmpdirname = tempfile.mkdtemp()
         processor = cls.processor_class(
-            image_processor=NeoMMEImageProcessor(patch_size=cls.patch_size), tokenizer=build_tokenizer()
+            image_processor=NeoMMEImageProcessor(patch_size=cls.patch_size), tokenizer=cls._setup_tokenizer()
         )
         cls._setup_test_attributes(processor)
         processor.save_pretrained(cls.tmpdirname)
 
     @property
     def marker_ids(self) -> dict[str, int]:
-        return {token: index for index, token in enumerate(SPECIAL_TOKENS)}
+        return {token: index for index, token in enumerate(self.special_tokens)}
 
     @unittest.skip(reason="NeoMMEProcessor takes exactly one of text or images: they are opposite retrieval sides")
     def test_processor_with_multiple_inputs(self):
@@ -292,7 +291,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     def test_missing_markers_raise(self):
         """A missing marker used to resolve to `unk_token_id` and silently open every document with `<unk>`."""
-        stripped = build_tokenizer(specials=[token for token in SPECIAL_TOKENS if token != "<row>"])
+        stripped = self._setup_tokenizer(specials=[token for token in self.special_tokens if token != "<row>"])
         processor = NeoMMEProcessor(
             image_processor=NeoMMEImageProcessor(patch_size=self.patch_size), tokenizer=stripped
         )
