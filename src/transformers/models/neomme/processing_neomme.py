@@ -93,16 +93,10 @@ def maxsim_scores(
 
 
 class NeoMMEProcessorKwargs(ProcessingKwargs, total=False):
-    # TODO: update based on maintainers' answer (allowlist TRF019 vs Hub wiring for call defaults).
-    # These cannot move to `processor_config.json` today: `_merge_kwargs` only reads this Python
-    # `_defaults` attribute, not Hub config. Without it, in-code construction (tests, assembling from
-    # a tokenizer) loses `return_tensors="pt"` / `padding="longest"` and ~22 tests fail. TRF019 is
-    # red for NeoMME; the rule has no suppression directive.
-    _defaults = {
-        "text_kwargs": {"padding": "longest"},
-        "images_kwargs": {"do_convert_rgb": True},
-        "common_kwargs": {"return_tensors": "pt"},
-    }
+    # Every call default lives where it applies instead: `padding` / `return_tensors` on the
+    # `process_*` signatures, `do_convert_rgb` on the image processors. The empty dict still has to be
+    # here, since `_merge_kwargs` reads `_defaults` unguarded and TypedDict subclasses do not inherit it.
+    _defaults = {}
 
 
 @auto_docstring
