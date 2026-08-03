@@ -32,7 +32,9 @@ def _pad_grids(embeddings: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tens
     """Variable-length `(length, dim)` token grids -> padded `(batch, max_length, dim)` plus a bool mask."""
     lengths = torch.tensor([grid.shape[0] for grid in embeddings])  # (batch_size,)
     mask = torch.arange(int(lengths.max()))[None, :] < lengths[:, None]  # (batch_size, max_length)
-    padded = torch.zeros(*mask.shape, embeddings[0].shape[-1], dtype=embeddings[0].dtype)  # (batch_size, max_length, dim)
+    padded = torch.zeros(
+        *mask.shape, embeddings[0].shape[-1], dtype=embeddings[0].dtype
+    )  # (batch_size, max_length, dim)
     for index, grid in enumerate(embeddings):
         padded[index, : grid.shape[0]] = grid
     return padded, mask
@@ -439,7 +441,9 @@ class NeoMMEProcessor(ProcessorMixin):
         return embeddings[0].dim() == 2
 
     def _as_dense(self, embeddings: torch.Tensor | list[torch.Tensor]) -> torch.Tensor:
-        return embeddings if isinstance(embeddings, torch.Tensor) else torch.stack(list(embeddings))  # (batch_size, dim)
+        return (
+            embeddings if isinstance(embeddings, torch.Tensor) else torch.stack(list(embeddings))
+        )  # (batch_size, dim)
 
 
 __all__ = ["NeoMMEProcessor"]

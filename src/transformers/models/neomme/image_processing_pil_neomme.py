@@ -158,9 +158,7 @@ class NeoMMEImageProcessorPil(PilBackend):
             if do_normalize:
                 image = self.normalize(image, image_mean, image_std)
 
-            pixel_values.append(
-                convert_image_to_patches(image, patch_size)
-            )  # (num_patches_i, 3 * patch_size ** 2)
+            pixel_values.append(convert_image_to_patches(image, patch_size))  # (num_patches_i, 3 * patch_size ** 2)
             image_grid_hw.append((grid_height, grid_width))
 
         return BatchFeature(

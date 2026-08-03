@@ -274,7 +274,12 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
 
     def test_get_number_of_image_patches(self):
         patch_size = self.image_processor_tester.patch_size
-        cases = [(9, 13, {}), (64, 32, {"max_side": 16}), (4, 4, {"min_pixels": 256}), (64, 32, {"max_pixels": 24 * 24})]
+        cases = [
+            (9, 13, {}),
+            (64, 32, {"max_side": 16}),
+            (4, 4, {"min_pixels": 256}),
+            (64, 32, {"max_pixels": 24 * 24}),
+        ]
 
         for backend_name, image_processing_class in self.image_processing_classes.items():
             with self.subTest(backend=backend_name):
