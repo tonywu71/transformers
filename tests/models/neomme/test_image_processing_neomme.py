@@ -174,31 +174,6 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
         rng = np.random.default_rng(0)
         return Image.fromarray(rng.integers(0, 255, (height, width, 3), dtype=np.uint8))
 
-    def test_backends_equivalence_with_resize(self):
-        """Budgeted resize is where backends can diverge; antialiased torchvision stays within one 8-bit level."""
-        if len(self.image_processing_classes) < 2:
-            self.skipTest(reason="Skipping backends equivalence test as there are less than 2 backends")
-
-        image = self.make_image(64, 39)
-        one_level = 1 / 127.5
-        patch_size = self.image_processor_tester.patch_size
-        backends = list(self.image_processing_classes.items())
-
-        for budget in ({"max_side": 16}, {"max_pixels": 24 * 24}, {"min_pixels": 128 * 128}):
-            with self.subTest(budget=budget):
-                reference_name, reference_class = backends[0]
-                reference = reference_class(patch_size=patch_size)(images=[image], return_tensors="np", **budget)
-                for backend_name, image_processing_class in backends[1:]:
-                    with self.subTest(reference=reference_name, backend=backend_name):
-                        other = image_processing_class(patch_size=patch_size)(
-                            images=[image], return_tensors="np", **budget
-                        )
-                        self.assertEqual(reference["image_grid_hw"].tolist(), other["image_grid_hw"].tolist())
-                        self.assertEqual(reference["pixel_values"].shape, other["pixel_values"].shape)
-                        np.testing.assert_allclose(
-                            reference["pixel_values"], other["pixel_values"], atol=one_level + 1e-6, rtol=0
-                        )
-
     def test_rescale_and_padding(self):
         """Padding is added to the RAW image, so padded pixels land at exactly -1 after the rescale."""
         patch_size = self.image_processor_tester.patch_size

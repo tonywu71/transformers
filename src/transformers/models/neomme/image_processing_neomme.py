@@ -23,7 +23,6 @@ from ...processing_utils import ImagesKwargs, Unpack
 from ...utils import TensorType, auto_docstring
 
 
-# Copied from transformers.models.neomme.image_processing_pil_neomme.get_resize_scale
 def get_resize_scale(
     height: int, width: int, max_side: int | None, max_pixels: int | None, min_pixels: int | None
 ) -> float:

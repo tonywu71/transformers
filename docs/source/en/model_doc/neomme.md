@@ -47,11 +47,6 @@ rendered properly in your Markdown viewer.
 [[autodoc]] NeoMMEImageProcessor
     - preprocess
 
-## NeoMMEImageProcessorPil
-
-[[autodoc]] NeoMMEImageProcessorPil
-    - preprocess
-
 ## NeoMMEProcessor
 
 [[autodoc]] NeoMMEProcessor
