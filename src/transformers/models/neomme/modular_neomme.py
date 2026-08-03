@@ -662,7 +662,6 @@ class NeoMMEForMaskedLM(NeoMMEPreTrainedModel):
     """
 )
 @dataclass
-# TODO: remove if we don't ship Matryoshka
 class NeoMMEForRetrievalOutput(ModelOutput):
     r"""
     loss (`torch.FloatTensor` of shape `(1,)`, *optional*):
@@ -716,7 +715,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         inputs_embeds: torch.Tensor | None = None,
         output_multivector: bool = True,
         output_dense: bool = True,
-        dense_dim: int | None = None,  # TODO: remove if we don't ship Matryoshka
+        dense_dim: int | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> NeoMMEForRetrievalOutput:
         r"""
@@ -778,7 +777,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         position_ids: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
         inputs_embeds: torch.Tensor | None = None,
-        dense_dim: int | None = None,  # TODO: remove if we don't ship Matryoshka
+        dense_dim: int | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         """Return pooled dense retrieval embeddings."""
@@ -805,7 +804,6 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
     def _dense(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, dense_dim: int | None = None
     ) -> torch.Tensor:
-        # TODO: remove if we don't ship Matryoshka
         pooled = self.pooler(hidden_states, attention_mask.bool())  # (batch_size, hidden_size)
         if dense_dim is None:
             return F.normalize(pooled, dim=-1)
@@ -814,7 +812,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         # vector, which downstream cosine scoring cannot detect.
         if not 0 < dense_dim <= pooled.shape[-1]:
             raise ValueError(f"dense_dim must be in 1..{pooled.shape[-1]} (the pooled width), got {dense_dim}")
-        return F.normalize(pooled[..., :dense_dim], dim=-1)  # TODO: remove if we don't ship Matryoshka
+        return F.normalize(pooled[..., :dense_dim], dim=-1)
 
 
 __all__ = [
