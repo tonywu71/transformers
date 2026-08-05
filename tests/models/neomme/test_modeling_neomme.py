@@ -219,6 +219,16 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     def test_inputs_embeds_matches_input_ids(self):
         pass
 
+    def test_inputs_embeds_match_when_value_embeds_off(self):
+        config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
+        config.use_value_embeds = False
+        model = NeoMMEModel(config).to(torch_device).eval()
+        inputs_embeds = model.get_input_embeddings()(input_ids)
+        with torch.no_grad():
+            from_ids = model(input_ids=input_ids, attention_mask=input_mask).last_hidden_state
+            from_embeds = model(inputs_embeds=inputs_embeds, attention_mask=input_mask).last_hidden_state
+        torch.testing.assert_close(from_ids, from_embeds)
+
     @unittest.skip(reason="the generic check compares an unused layer spectrum that differs by one floating-point ULP")
     def test_model_rope_scaling_frequencies(self):
         pass

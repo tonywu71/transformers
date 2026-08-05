@@ -32,10 +32,13 @@ from ...modeling_outputs import BaseModelOutput, MaskedLMOutput
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
-from ...utils import ModelOutput, TransformersKwargs, auto_docstring, torch_compilable_check
+from ...utils import ModelOutput, TransformersKwargs, auto_docstring, logging, torch_compilable_check
 from ...utils.generic import can_return_tuple, merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from .configuration_neomme import NeoMMEConfig
+
+
+logger = logging.get_logger(__name__)
 
 
 class NeoMMEEmbeddings(nn.Module):
@@ -549,6 +552,8 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+        if inputs_embeds is not None and self.value_embeddings is not None:
+            logger.warning_once("inputs_embeds cannot apply value embeddings without token ids")
 
         hidden_states = self.embeddings(
             input_ids=input_ids, inputs_embeds=inputs_embeds

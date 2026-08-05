@@ -510,6 +510,8 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+        if inputs_embeds is not None and self.value_embeddings is not None:
+            logger.warning_once("inputs_embeds cannot apply value embeddings without token ids")
 
         hidden_states = self.embeddings(
             input_ids=input_ids, inputs_embeds=inputs_embeds
