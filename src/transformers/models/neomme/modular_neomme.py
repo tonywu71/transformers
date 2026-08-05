@@ -26,7 +26,7 @@ from ...modeling_outputs import BaseModelOutput, MaskedLMOutput
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
-from ...utils import ModelOutput, TransformersKwargs, auto_docstring, is_torchdynamo_compiling, logging
+from ...utils import ModelOutput, TransformersKwargs, auto_docstring, logging, torch_compilable_check
 from ...utils.generic import can_return_tuple, merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from ..llama.modeling_llama import eager_attention_forward, repeat_kv
@@ -470,14 +470,15 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
         self.layers = nn.ModuleList(
             [NeoMMEEncoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
+        global_layers = [i for i, layer_type in enumerate(config.layer_types) if layer_type == "full_attention"]
         self.value_embeddings = (
             NeoMMEValueEmbeddings(config.vocab_size, config.num_key_value_heads * config.head_dim)
-            if config.use_value_embeds
+            if config.use_value_embeds and global_layers
             else None
         )
-        global_layers = [i for i, layer_type in enumerate(config.layer_types) if layer_type == "full_attention"]
-        # Value embeddings feed the FIRST and LAST global layers only.
-        self.value_embedding_layers = {global_layers[0], global_layers[-1]} if config.use_value_embeds else set()
+        self.value_embedding_layers = (
+            {global_layers[0], global_layers[-1]} if self.value_embeddings is not None else set()
+        )
         self.gradient_checkpointing = False
         self.post_init()
 
@@ -504,6 +505,8 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
             Two-axis M-RoPE positions. A 2-D tensor is expanded onto both axes for text-only inputs.
         pixel_values (`torch.Tensor` of shape `(num_patches, 3 * patch_size ** 2)`, *optional*):
             Flattened RGB patches scattered into image placeholder tokens.
+        inputs_embeds (`torch.Tensor` of shape `(batch_size, sequence_length, embedding_rank)`, *optional*):
+            Token embeddings before projection. Value embeddings require `input_ids` and are omitted on this path.
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
@@ -564,13 +567,11 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
             (input_ids == self.config.image_token_id) & (previous_ids != self.config.document_token_id)
         ).unsqueeze(-1)
 
-        # The placeholder count lives in tensor VALUES, which `fullgraph=True` refuses to guard on.
-        if not is_torchdynamo_compiling():
-            num_image_tokens = int(image_mask.sum())
-            if num_image_tokens != pixel_values.shape[0]:
-                raise ValueError(
-                    f"Got {pixel_values.shape[0]} image patches for {num_image_tokens} image placeholder tokens"
-                )
+        num_image_tokens = image_mask.sum()
+        torch_compilable_check(
+            num_image_tokens == pixel_values.shape[0],
+            lambda: f"Got {pixel_values.shape[0]} image patches for {int(num_image_tokens)} image placeholder tokens",
+        )
         patch_embeds = self.patch_embeddings(pixel_values.to(hidden_states.dtype))  # (num_patches, hidden_size)
         return hidden_states.masked_scatter(image_mask, patch_embeds)
 
@@ -631,7 +632,7 @@ class NeoMMEForMaskedLM(NeoMMEPreTrainedModel):
     ) -> MaskedLMOutput:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for the masked-language-modeling loss. Indices should be in `[0, ..., config.vocab_size]`
+            Labels for the masked-language-modeling loss. Indices should be in `[0, ..., config.vocab_size - 1]`
             or `-100`; only tokens with a label different from `-100` contribute.
         """
         outputs: BaseModelOutput = self.model(

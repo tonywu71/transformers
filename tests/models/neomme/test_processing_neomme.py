@@ -19,7 +19,7 @@ import unittest
 import numpy as np
 from parameterized import parameterized
 
-from transformers.testing_utils import require_tokenizers, require_torch, require_vision
+from transformers.testing_utils import require_tokenizers, require_torch, require_vision, torch_device
 from transformers.utils import is_tokenizers_available, is_torch_available, is_vision_available
 
 from ...test_processing_common import ProcessorTesterMixin
@@ -48,7 +48,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     @classmethod
     def _setup_tokenizer(cls, specials: list[str] | None = None) -> "PreTrainedTokenizerFast":
-        """Whitespace word-level tokenizer with specials at frozen ids (built locally, no Hub)."""
+        """Build a local word-level tokenizer with frozen special-token ids."""
         specials = specials if specials is not None else cls.special_tokens
         vocab_words = ["hello", "world", "a", "document", "query", "text", "lower", "newer"]
         vocabulary = {token: index for index, token in enumerate(specials)}
@@ -71,7 +71,6 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Assemble the processor from local components (staging checkpoint is private)."""
         cls.tmpdirname = tempfile.mkdtemp()
         processor = cls.processor_class(
             image_processor=NeoMMEImageProcessor(patch_size=cls.patch_size), tokenizer=cls._setup_tokenizer()
@@ -295,8 +294,12 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
         self.assertEqual(first[0], self.marker_ids["<doc>"])
         self.assertNotIn(self.marker_ids["<mask>"], first)
-        # An empty string becomes a single space, so no document is marker-only.
         self.assertEqual(int(batch["attention_mask"][1].sum()), 1)
+
+    def test_pretokenized_text_raises(self):
+        processor = self.get_processor()
+        with self.assertRaisesRegex(ValueError, "Pretokenized text"):
+            processor(text=[["hello", "world"]])
 
     def test_document_truncation(self):
         processor = self.get_processor()
@@ -394,9 +397,14 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
             torch.testing.assert_close(processor.score_retrieval(query, passages)[0], torch.tensor([1.0, -1.0]))
 
         with self.subTest(mode="maxsim_list_grids"):
-            query = [torch.tensor([[1.0, 0.0], [0.0, 1.0]])]
-            passages = [torch.tensor([[1.0, 0.0]]), torch.tensor([[0.0, 1.0], [0.0, 1.0]])]
-            torch.testing.assert_close(processor.score_retrieval(query, passages)[0], torch.tensor([0.5, 0.5]))
+            query = [torch.tensor([[1.0, 0.0], [0.0, 1.0]], device=torch_device)]
+            passages = [
+                torch.tensor([[1.0, 0.0]], device=torch_device),
+                torch.tensor([[0.0, 1.0], [0.0, 1.0]], device=torch_device),
+            ]
+            scores = processor.score_retrieval(query, passages, output_device=torch_device)
+            self.assertEqual(scores.device.type, torch_device)
+            torch.testing.assert_close(scores[0], torch.tensor([0.5, 0.5], device=torch_device))
 
         with self.subTest(mode="dense_cosine"):
             queries = torch.tensor([[1.0, 0.0]])

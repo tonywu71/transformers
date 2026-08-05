@@ -13,16 +13,22 @@
 # limitations under the License.
 """Processor class for NeoMME."""
 
+from __future__ import annotations
+
 from typing import Any, Literal
 
 import numpy as np
-import torch
 
 from ...feature_extraction_utils import BatchFeature
 from ...image_utils import ImageInput, is_valid_image
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
-from ...tokenization_utils_base import PreTokenizedInput, TextInput
-from ...utils import auto_docstring, logging
+from ...tokenization_utils_base import TextInput
+from ...utils import auto_docstring, is_torch_available, logging
+from ...utils.import_utils import requires
+
+
+if is_torch_available():
+    import torch
 
 
 logger = logging.get_logger(__name__)
@@ -30,10 +36,11 @@ logger = logging.get_logger(__name__)
 
 def _pad_grids(embeddings: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
     """Variable-length `(length, dim)` token grids -> padded `(batch, max_length, dim)` plus a bool mask."""
-    lengths = torch.tensor([grid.shape[0] for grid in embeddings])  # (batch_size,)
-    mask = torch.arange(int(lengths.max()))[None, :] < lengths[:, None]  # (batch_size, max_length)
+    device = embeddings[0].device
+    lengths = torch.tensor([grid.shape[0] for grid in embeddings], device=device)  # (batch_size,)
+    mask = torch.arange(int(lengths.max()), device=device)[None, :] < lengths[:, None]  # (batch_size, max_length)
     padded = torch.zeros(
-        *mask.shape, embeddings[0].shape[-1], dtype=embeddings[0].dtype
+        *mask.shape, embeddings[0].shape[-1], dtype=embeddings[0].dtype, device=device
     )  # (batch_size, max_length, dim)
     for index, grid in enumerate(embeddings):
         padded[index, : grid.shape[0]] = grid
@@ -52,33 +59,9 @@ def maxsim_scores(
     passage_grids: torch.Tensor,
     query_mask: torch.Tensor,
     passage_mask: torch.Tensor,
-    normalize: bool = True,  # TODO: remove if we don't ship MeanMaxSim
+    normalize: bool = True,
 ) -> torch.Tensor:
-    """ColBERT-style late interaction (MaxSim) over multi-vector embeddings.
-
-    For each query token, take the maximum cosine similarity over passage tokens, then sum those
-    maxima. Embeddings are always L2-normalized along the last dimension before scoring; padding
-    rows are ignored via the masks. Empty passages (no valid tokens) score `-1`.
-
-    Args:
-        query_grids (`torch.Tensor` of shape `(num_queries, query_length, dim)`):
-            Query token embeddings. Padding rows should be zero (or otherwise excluded by
-            `query_mask`).
-        passage_grids (`torch.Tensor` of shape `(num_passages, passage_length, dim)`):
-            Passage token embeddings. Same padding convention as `query_grids`.
-        query_mask (`torch.Tensor` of shape `(num_queries, query_length)`):
-            Bool mask that is `True` for real query tokens and `False` for padding.
-        passage_mask (`torch.Tensor` of shape `(num_passages, passage_length)`):
-            Bool mask that is `True` for real passage tokens and `False` for padding.
-        normalize (`bool`, *optional*, defaults to `True`):
-            If `True`, divide each score by the number of non-padding query tokens so scores stay
-            roughly in `[-1, 1]` regardless of query length. If `False`, return the raw ColBERT
-            sum (scales with query length). This is **not** about L2-normalizing the vectors —
-            that always happens.
-
-    Returns:
-        `torch.Tensor` of shape `(num_queries, num_passages)`.
-    """
+    """Compute MaxSim from padded token grids, optionally normalized by query length."""
     query_grids = (
         torch.nn.functional.normalize(query_grids.float(), dim=-1) * query_mask[..., None]
     )  # (num_queries, query_length, dim)
@@ -89,18 +72,17 @@ def maxsim_scores(
     similarity = similarity.masked_fill(~passage_mask[None, :, None, :], torch.finfo(similarity.dtype).min)
     scores = similarity.max(dim=-1).values.sum(dim=-1)  # (num_queries, num_passages)
 
-    if normalize:  # TODO: remove if we don't ship MeanMaxSim
+    if normalize:
         scores = scores / query_mask.sum(-1, keepdim=True).clamp_min(1).to(scores.dtype)
     return scores.masked_fill(~passage_mask.any(dim=-1)[None, :], -1.0)
 
 
 class NeoMMEProcessorKwargs(ProcessingKwargs, total=False):
-    # Every call default lives where it applies instead: `padding` / `return_tensors` on the
-    # `process_*` signatures, `do_convert_rgb` on the image processors. The empty dict still has to be
-    # here, since `_merge_kwargs` reads `_defaults` unguarded and TypedDict subclasses do not inherit it.
+    # `_merge_kwargs` reads this attribute directly; TypedDict subclasses do not inherit it.
     _defaults = {}
 
 
+@requires(backends=("torch",))
 @auto_docstring
 class NeoMMEProcessor(ProcessorMixin):
     r"""
@@ -158,7 +140,7 @@ class NeoMMEProcessor(ProcessorMixin):
     def __call__(
         self,
         images: ImageInput | None = None,
-        text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput] | None = None,
+        text: TextInput | list[TextInput] | None = None,
         text_role: Literal["query", "document"] = "query",
         **kwargs: Unpack[NeoMMEProcessorKwargs],
     ) -> BatchFeature:
@@ -186,6 +168,8 @@ class NeoMMEProcessor(ProcessorMixin):
 
         if isinstance(text, str):
             text = [text]
+        if text and not isinstance(text[0], str):
+            raise ValueError("Pretokenized text is not supported")
         # What the caller actually named, flat or nested, as opposed to what `_merge_kwargs` injected.
         requested = set(kwargs) | set(kwargs.get("text_kwargs", {}))
         text_kwargs = self._supported_text_kwargs(output_kwargs["text_kwargs"], requested)
@@ -266,7 +250,7 @@ class NeoMMEProcessor(ProcessorMixin):
         output_dtype: torch.dtype | None = None,
         output_device: str | torch.device = "cpu",
         *,
-        normalize: bool = True,  # TODO: remove if we don't ship MeanMaxSim
+        normalize: bool = True,
     ) -> torch.Tensor:
         """Score query-passage pairs with MaxSim (multi-vector) or cosine similarity (dense).
 
@@ -301,7 +285,7 @@ class NeoMMEProcessor(ProcessorMixin):
             raise ValueError(f"batch_size must be at least 1, got {batch_size}")
 
         if self._is_multi_vector(passage_embeddings):
-            scores = self._maxsim_in_blocks(query_embeddings, passage_embeddings, batch_size, normalize)
+            scores = self._maxsim_in_blocks(query_embeddings, passage_embeddings, batch_size, normalize, output_device)
         else:
             queries = self._as_dense(query_embeddings)  # (num_queries, dim)
             passages = self._as_dense(passage_embeddings)  # (num_passages, dim)
@@ -409,7 +393,8 @@ class NeoMMEProcessor(ProcessorMixin):
         query_embeddings: torch.Tensor | list[torch.Tensor],
         passage_embeddings: torch.Tensor | list[torch.Tensor],
         batch_size: int,
-        normalize: bool,  # TODO: remove if we don't ship MeanMaxSim
+        normalize: bool,
+        output_device: str | torch.device,
     ) -> torch.Tensor:
         """Compute MaxSim scores in query-passage blocks."""
         query_grids, query_mask = _as_padded_grids(
@@ -432,7 +417,7 @@ class NeoMMEProcessor(ProcessorMixin):
                 )
                 for passage_start in range(0, len(passage_grids), batch_size)
             ]
-            rows.append(torch.cat(columns, dim=1))
+            rows.append(torch.cat(columns, dim=1).to(output_device))
         return torch.cat(rows, dim=0)  # (num_queries, num_passages)
 
     def _is_multi_vector(self, embeddings: torch.Tensor | list[torch.Tensor]) -> bool:

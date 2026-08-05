@@ -225,8 +225,7 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
                 )
 
     def test_caps_clamp_min_pixels(self):
-        """A cap beats the floor. The floor used to ASSIGN the scale, so setting `min_pixels` next to a cap
-        silently discarded the cap and emitted a grid several times over budget."""
+        """A cap takes precedence over the minimum pixel floor."""
         patch_size = self.image_processor_tester.patch_size
         image = self.make_image(64, 32)
 
@@ -241,17 +240,22 @@ class NeoMMEImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
                         ]
                         self.assertEqual(floored.tolist(), capped)
 
-                # The case above has a source LARGER than the cap, so a guarded clamp would fire on the source size
-                # alone. Only a source small enough to be under the cap until the floor grows it past it pins the
-                # clamp: 4x4 grown toward 1024 px would be 32x32, and the 8px cap has to cut it back to 8x8.
                 grid = processor(images=[self.make_image(4, 4)], max_side=8, min_pixels=1024, return_tensors="np")
                 self.assertEqual(grid["image_grid_hw"].tolist(), [[2, 2]])
+
+    def test_unsupported_image_kwargs_raise(self):
+        processor = self.image_processing_classes["torchvision"](patch_size=self.image_processor_tester.patch_size)
+        image = self.make_image(16, 16)
+        for kwargs in ({"size": 8}, {"do_center_crop": True}, {"do_pad": True}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                processor(images=[image], **kwargs)
 
     def test_get_number_of_image_patches(self):
         patch_size = self.image_processor_tester.patch_size
         cases = [
             (9, 13, {}),
             (64, 32, {"max_side": 16}),
+            (64, 32, {"do_resize": False, "max_side": 16}),
             (4, 4, {"min_pixels": 256}),
             (64, 32, {"max_pixels": 24 * 24}),
         ]

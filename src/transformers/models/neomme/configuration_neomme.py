@@ -24,8 +24,7 @@ from ...utils import auto_docstring, logging
 logger = logging.get_logger(__name__)
 
 
-# TODO: set checkpoint= to the public Hub id before release (needed by check_config_docstrings).
-@auto_docstring
+@auto_docstring(checkpoint="Hcompany/neomme-250M-retriever-transformers-v1.0")
 @strict
 class NeoMMEConfig(PreTrainedConfig):
     r"""
@@ -94,6 +93,10 @@ class NeoMMEConfig(PreTrainedConfig):
     tie_word_embeddings: bool = True
 
     def __post_init__(self, **kwargs):
+        if self.num_key_value_heads <= 0 or self.num_attention_heads % self.num_key_value_heads:
+            raise ValueError("num_key_value_heads must divide num_attention_heads")
+        if self.global_attn_every_n_layers is not None and self.global_attn_every_n_layers <= 0:
+            raise ValueError("global_attn_every_n_layers must be positive")
         if not 0 < self.sliding_window_short <= self.sliding_window_long:
             raise ValueError(
                 f"expected 0 < sliding_window_short <= sliding_window_long, got {self.sliding_window_short} "
@@ -126,6 +129,11 @@ class NeoMMEConfig(PreTrainedConfig):
         rope_scaling = kwargs.pop("rope_scaling", None)
         rope_theta = kwargs.pop("rope_theta", None)
         self.rope_parameters = self.rope_parameters if self.rope_parameters is not None else {}
+        if rope_scaling is not None:
+            rope_scaling = dict(rope_scaling)
+            legacy_rope_type = rope_scaling.pop("type", None)
+            if legacy_rope_type is not None:
+                rope_scaling.setdefault("rope_type", legacy_rope_type)
 
         for layer_type in set(self.layer_types):
             layer_params = self.rope_parameters.setdefault(layer_type, {})

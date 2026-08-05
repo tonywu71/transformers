@@ -13,7 +13,7 @@ specific language governing permissions and limitations under the License.
 rendered properly in your Markdown viewer.
 
 -->
-*This model was contributed to Hugging Face Transformers on 2026-07-30.*
+*This model was contributed to Hugging Face Transformers on 2026-08-05.*
 
 # NeoMME
 
@@ -24,19 +24,38 @@ rendered properly in your Markdown viewer.
 
 ## Overview
 
-<!-- TODO: write Overview -->
+NeoMME is a multimodal encoder for text and document images. It uses one backbone for both modalities and provides
+multi-vector MaxSim embeddings and attention-pooled dense embeddings.
 
 ## Usage
 
-<!-- TODO: write Usage -->
+The current checkpoint is private and requires an authenticated Hub account.
 
 ```python
-# TODO: write usage example
+import torch
+from transformers import NeoMMEForRetrieval, NeoMMEProcessor
+
+checkpoint = "Hcompany/neomme-250M-retriever-transformers-v1.0"
+processor = NeoMMEProcessor.from_pretrained(checkpoint)
+model = NeoMMEForRetrieval.from_pretrained(checkpoint)
+
+queries = processor(text=["What color is a ripe banana?"], text_role="query", return_tensors="pt")
+documents = processor(
+    text=["Bananas turn yellow as they ripen.", "Apples can be red or green."],
+    text_role="document",
+    return_tensors="pt",
+)
+
+with torch.no_grad():
+    query_embeddings = model(**queries).multivector_embeddings
+    document_embeddings = model(**documents).multivector_embeddings
+
+scores = processor.score_retrieval(query_embeddings, document_embeddings)
 ```
 
 ## Notes
 
-<!-- TODO: write Notes -->
+MaxSim is the primary retrieval head. The dense head supports Matryoshka truncation through `dense_dim`.
 
 ## NeoMMEConfig
 

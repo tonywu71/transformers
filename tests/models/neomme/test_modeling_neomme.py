@@ -215,19 +215,11 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
     def test_for_masked_lm(self):
         self.model_tester.create_and_check_for_masked_lm(*self.model_tester.prepare_config_and_inputs())
 
-    @unittest.skip(
-        reason="value embeddings are a second vocab-indexed table read inside attention, so an "
-        "`inputs_embeds` forward has no ids to look them up with and deliberately omits them"
-    )
+    @unittest.skip(reason="value embeddings require token ids and are omitted by inputs_embeds-only forwards")
     def test_inputs_embeds_matches_input_ids(self):
         pass
 
-    @unittest.skip(
-        reason="its per-layer-type `ntk_inv_freq <= original_inv_freq` check reads a layer type the test never "
-        "forwards, so it compares two init-time values that differ by 1 ULP: NeoMME's default RoPE keeps the "
-        "research implementation's `theta ** -x`, upstream's dynamic init uses `1.0 / theta ** x`. The three "
-        "`test_model_rope_scaling_from_config` variants do run."
-    )
+    @unittest.skip(reason="the generic check compares an unused layer spectrum that differs by one floating-point ULP")
     def test_model_rope_scaling_frequencies(self):
         pass
 
@@ -243,6 +235,23 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         """At least one of `layer_types` or `global_attn_every_n_layers` must be set."""
         with self.assertRaises(ValueError):
             NeoMMEConfig(layer_types=None, global_attn_every_n_layers=None)
+        for stride in (0, -1):
+            with self.assertRaises(ValueError):
+                NeoMMEConfig(global_attn_every_n_layers=stride)
+
+        config = NeoMMEConfig(
+            num_hidden_layers=2,
+            global_attn_every_n_layers=None,
+            layer_types=["sliding_attention"] * 2,
+        )
+        model = NeoMMEModel(config)
+        self.assertIsNone(model.value_embeddings)
+        self.assertEqual(model.value_embedding_layers, set())
+
+    def test_grouped_query_heads_validated(self):
+        for num_key_value_heads in (0, 3):
+            with self.assertRaisesRegex(ValueError, "must divide"):
+                NeoMMEConfig(num_attention_heads=4, num_key_value_heads=num_key_value_heads)
 
     def test_layer_types_stride_mismatch(self):
         """`layer_types` is what gets serialized, so it must never silently contradict the stride."""
@@ -290,6 +299,13 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
         explicit = NeoMMEConfig(rope_theta=123456.0, rope_parameters={"sliding_attention": {"rope_theta": 7.0}})
         self.assertEqual(explicit.rope_parameters["sliding_attention"]["rope_theta"], 7.0)
         self.assertEqual(explicit.rope_parameters["full_attention"]["rope_theta"], 123456.0)
+
+    def test_legacy_rope_scaling_type_alias(self):
+        config = NeoMMEConfig(rope_scaling={"type": "linear", "factor": 2.0})
+        self.assertEqual(
+            {params["rope_type"] for params in config.rope_parameters.values()},
+            {"linear"},
+        )
 
     def test_partial_rotary_factor_multiple_of_four(self):
         """Rotating dims must be a multiple of 4 (two M-RoPE axes × pairs); used to silently round down."""
@@ -411,6 +427,8 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
             eager = model(input_ids=input_ids, pixel_values=pixel_values)
 
         torch.testing.assert_close(compiled.last_hidden_state, eager.last_hidden_state)
+        with self.assertRaises((ValueError, RuntimeError)):
+            torch.compile(model, fullgraph=True)(input_ids=input_ids, pixel_values=pixel_values[:-1])
 
     def test_masked_lm_adds_no_parameters(self):
         config = self.model_tester.get_config()
@@ -538,13 +556,11 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         self.assertTrue((output.multivector_embeddings[0] == 0).all())
 
 
-# TODO: repoint at the public Hub checkpoint before release (this staging repo is private).
 @slow
 @require_torch
 @require_vision
 class NeoMMEModelIntegrationTest(unittest.TestCase):
-    # TODO: replace with the public model id before release.
-    model_name: ClassVar[str] = "Hcompany/neomme-250M-retrieval-dev-transformers-v0.3"
+    model_name: ClassVar[str] = "Hcompany/neomme-250M-retriever-transformers-v1.0"
     # Parity is only ever gated in float32; bf16 drift is documented separately and never asserted on.
     model_dtype: ClassVar["torch.dtype"] = torch.float32 if is_torch_available() else None
 
@@ -559,7 +575,6 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Load checkpoint and dataset once for the class (not per test method)."""
         cls.processor = NeoMMEProcessor.from_pretrained(cls.model_name)
         cls.model = NeoMMEForRetrieval.from_pretrained(cls.model_name, dtype=cls.model_dtype)
         cls.model = cls.model.to(torch_device).eval()
@@ -580,9 +595,9 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
         self._assert_diagonal_retrieval(
             self.processor.score_retrieval(queries, images),
             expected=[
-                [0.8281, 0.6679, 0.8145],
-                [0.7385, 0.8536, 0.7621],
-                [0.7486, 0.7014, 0.8988],
+                [0.8834, 0.7265, 0.8645],
+                [0.7274, 0.8729, 0.7606],
+                [0.7480, 0.7366, 0.9043],
             ],
         )
 
@@ -595,9 +610,9 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
         self._assert_diagonal_retrieval(
             self.processor.score_retrieval(queries, images),
             expected=[
-                [0.6396, 0.4721, 0.5920],
-                [0.6066, 0.6850, 0.6375],
-                [0.5440, 0.5334, 0.6988],
+                [0.7822, 0.7305, 0.7645],
+                [0.6947, 0.7930, 0.7301],
+                [0.6945, 0.6778, 0.8178],
             ],
         )
 
@@ -607,8 +622,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
         self._assert_diagonal_retrieval(
             self.processor.score_retrieval(queries, documents),
             expected=[
-                [0.8280, 0.3310],
-                [0.3668, 0.6765],
+                [0.9164, 0.3841],
+                [0.4291, 0.7688],
             ],
         )
 
@@ -620,8 +635,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
         self._assert_diagonal_retrieval(
             self.processor.score_retrieval(queries, documents),
             expected=[
-                [0.8187, 0.4083],
-                [0.4266, 0.7311],
+                [0.8447, 0.4202],
+                [0.4893, 0.7635],
             ],
         )
 

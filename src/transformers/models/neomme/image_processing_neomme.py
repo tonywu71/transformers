@@ -144,6 +144,14 @@ class NeoMMEImageProcessor(TorchvisionBackend):
         return_tensors: str | TensorType | None,
         **kwargs,
     ) -> BatchFeature:
+        unsupported = sorted(
+            name
+            for name in ("size", "crop_size", "do_center_crop", "do_pad", "pad_size", "image_seq_length")
+            if kwargs.get(name) not in (None, False)
+        )
+        if unsupported:
+            raise ValueError(f"NeoMMEImageProcessor does not implement these image kwargs: {unsupported}")
+
         pixel_values: list[torch.Tensor] = []
         image_grid_hw: list[tuple[int, int]] = []
 
@@ -173,14 +181,15 @@ class NeoMMEImageProcessor(TorchvisionBackend):
         """Number of patch tokens one `height x width` image becomes (excluding the row-break tokens)."""
         images_kwargs = images_kwargs or {}
         patch_size = images_kwargs.get("patch_size") or self.patch_size
-        scale = get_resize_scale(
-            height,
-            width,
-            images_kwargs.get("max_side", self.max_side),
-            images_kwargs.get("max_pixels", self.max_pixels),
-            images_kwargs.get("min_pixels", self.min_pixels),
-        )
-        height, width = max(1, round(height * scale)), max(1, round(width * scale))
+        if images_kwargs.get("do_resize", self.do_resize):
+            scale = get_resize_scale(
+                height,
+                width,
+                images_kwargs.get("max_side", self.max_side),
+                images_kwargs.get("max_pixels", self.max_pixels),
+                images_kwargs.get("min_pixels", self.min_pixels),
+            )
+            height, width = max(1, round(height * scale)), max(1, round(width * scale))
         return -(-height // patch_size) * (-(-width // patch_size))
 
     def _resize_to_budget(
