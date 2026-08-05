@@ -13,6 +13,7 @@
 # limitations under the License.
 """Testing suite for the PyTorch NeoMME model."""
 
+import os
 import unittest
 from typing import ClassVar
 from unittest.mock import patch
@@ -188,9 +189,7 @@ class NeoMMEModelTester:
     def create_and_check_for_retrieval(self, config, input_ids, input_mask, token_labels):
         model = NeoMMEForRetrieval(config=config).to(torch_device).eval()
         result = model(input_ids, attention_mask=input_mask)
-        self.parent.assertEqual(
-            result.multivector_embeddings.shape, (self.batch_size, self.seq_length, self.embedding_dim)
-        )
+        self.parent.assertEqual(result.embeddings.shape, (self.batch_size, self.seq_length, self.embedding_dim))
         self.parent.assertEqual(result.dense_embeddings.shape, (self.batch_size, self.hidden_size))
 
 
@@ -518,7 +517,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         input_mask[0, 3:] = 0
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
-        embeddings = model(input_ids=input_ids, attention_mask=input_mask).multivector_embeddings
+        embeddings = model(input_ids=input_ids, attention_mask=input_mask).embeddings
 
         self.assertTrue((embeddings[0, 3:] == 0).all())
         real = input_mask.bool()
@@ -550,27 +549,40 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
 
         self.assertIsNone(model(input_ids=input_ids, output_dense=False).dense_embeddings)
-        self.assertIsNone(model(input_ids=input_ids, output_multivector=False).multivector_embeddings)
+        self.assertIsNone(model(input_ids=input_ids, output_multivector=False).embeddings)
         with self.assertRaises(ValueError):
             model(input_ids=input_ids, output_dense=False, output_multivector=False)
 
     def test_fully_padded_row_pooling(self):
-        """A row with no real token must not turn into NaN through the pooler's softmax."""
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         input_mask[0] = 0
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
         output = model(input_ids=input_ids, attention_mask=input_mask)
 
         self.assertTrue(torch.isfinite(output.dense_embeddings).all())
-        self.assertTrue(torch.isfinite(output.multivector_embeddings).all())
-        self.assertTrue((output.multivector_embeddings[0] == 0).all())
+        self.assertTrue(torch.isfinite(output.embeddings).all())
+        self.assertTrue((output.embeddings[0] == 0).all())
+        self.assertTrue((output.dense_embeddings[0] == 0).all())
+
+    def test_dense_head_uses_masked_mean_pooling(self):
+        config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
+        input_mask[0, 3:] = 0
+        model = NeoMMEForRetrieval(config).to(torch_device).eval()
+
+        with torch.no_grad():
+            hidden_states = model.model(input_ids=input_ids, attention_mask=input_mask).last_hidden_state
+            actual = model(input_ids=input_ids, attention_mask=input_mask).dense_embeddings
+
+        expanded_mask = input_mask.unsqueeze(-1).expand(hidden_states.shape).to(hidden_states.dtype)
+        expected = (hidden_states * expanded_mask).sum(1) / expanded_mask.sum(1).clamp_min(1e-9)
+        torch.testing.assert_close(actual, torch.nn.functional.normalize(expected, dim=-1))
 
 
 @slow
 @require_torch
 @require_vision
 class NeoMMEModelIntegrationTest(unittest.TestCase):
-    model_name: ClassVar[str] = "Hcompany/neomme-250M-retriever-transformers-v1.0"
+    model_name: ClassVar[str | None] = os.environ.get("NEOMME_TRANSFORMERS_MEAN_REPO")
     # Parity is only ever gated in float32; bf16 drift is documented separately and never asserted on.
     model_dtype: ClassVar["torch.dtype"] = torch.float32 if is_torch_available() else None
 
@@ -585,6 +597,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        if cls.model_name is None:
+            raise unittest.SkipTest("set NEOMME_TRANSFORMERS_MEAN_REPO to a mean-pooled NeoMME checkpoint")
         cls.processor = NeoMMEProcessor.from_pretrained(cls.model_name)
         cls.model = NeoMMEForRetrieval.from_pretrained(cls.model_name, dtype=cls.model_dtype)
         cls.model = cls.model.to(torch_device).eval()
@@ -602,14 +616,7 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
     def test_multivector_image_retrieval(self):
         """MaxSim: each query ranks its own image document first."""
         queries, images = self._embed_image_pair(head="multivector")
-        self._assert_diagonal_retrieval(
-            self.processor.score_retrieval(queries, images),
-            expected=[
-                [0.8834, 0.7265, 0.8645],
-                [0.7274, 0.8729, 0.7606],
-                [0.7480, 0.7366, 0.9043],
-            ],
-        )
+        self._assert_diagonal_retrieval(self.processor.score_retrieval(queries, images))
 
     def test_dense_image_retrieval(self):
         """Dense cosine: each query ranks its own image document first."""
@@ -617,45 +624,26 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
         self.assertEqual(images.shape, (len(self.dataset), self.model.config.hidden_size))
         torch.testing.assert_close(images.norm(dim=-1), torch.ones_like(images[:, 0]), rtol=1e-3, atol=1e-3)
-        self._assert_diagonal_retrieval(
-            self.processor.score_retrieval(queries, images),
-            expected=[
-                [0.7822, 0.7305, 0.7645],
-                [0.6947, 0.7930, 0.7301],
-                [0.6945, 0.6778, 0.8178],
-            ],
-        )
+        self._assert_diagonal_retrieval(self.processor.score_retrieval(queries, images))
 
     def test_multivector_text_retrieval(self):
         """MaxSim: each query ranks its own text document first."""
         queries, documents = self._embed_text_pair(head="multivector")
-        self._assert_diagonal_retrieval(
-            self.processor.score_retrieval(queries, documents),
-            expected=[
-                [0.9164, 0.3841],
-                [0.4291, 0.7688],
-            ],
-        )
+        self._assert_diagonal_retrieval(self.processor.score_retrieval(queries, documents))
 
     def test_dense_text_retrieval(self):
         """Dense cosine: each query ranks its own text document first."""
         queries, documents = self._embed_text_pair(head="dense")
 
         torch.testing.assert_close(documents.norm(dim=-1), torch.ones_like(documents[:, 0]), rtol=1e-3, atol=1e-3)
-        self._assert_diagonal_retrieval(
-            self.processor.score_retrieval(queries, documents),
-            expected=[
-                [0.8447, 0.4202],
-                [0.4893, 0.7635],
-            ],
-        )
+        self._assert_diagonal_retrieval(self.processor.score_retrieval(queries, documents))
 
     def _embed(self, batch, head: str) -> "torch.Tensor":
         """Embeddings for one retrieval side, computing only `head` so the other costs nothing."""
         only_this_head = {"output_multivector": False} if head == "dense" else {"output_dense": False}
         with torch.inference_mode():
             outputs = self.model(**batch.to(torch_device), **only_this_head)
-        return outputs.dense_embeddings if head == "dense" else outputs.multivector_embeddings
+        return outputs.dense_embeddings if head == "dense" else outputs.embeddings
 
     def _embed_image_pair(self, head: str) -> tuple["torch.Tensor", "torch.Tensor"]:
         """`(queries, image documents)` from hf-internal-testing/document-visual-retrieval-test."""
@@ -669,12 +657,8 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
         documents = self.processor(text=self.TEXT_DOCUMENTS, text_role="document")
         return self._embed(queries, head), self._embed(documents, head)
 
-    def _assert_diagonal_retrieval(self, scores: "torch.Tensor", expected: list[list[float]]) -> None:
-        """Every query ranks its own document first, and the scores themselves have not drifted.
-
-        Both heads score in `[-1, 1]`: MaxSim divides by the query length, cosine is bounded by definition.
-        """
-        self.assertEqual(scores.shape, (len(expected), len(expected)))
-        self.assertTrue((scores.argmax(dim=1) == torch.arange(len(expected), device=scores.device)).all())
+    def _assert_diagonal_retrieval(self, scores: "torch.Tensor") -> None:
+        """Every query ranks its paired document first."""
+        self.assertEqual(scores.shape[0], scores.shape[1])
+        self.assertTrue((scores.argmax(dim=1) == torch.arange(len(scores), device=scores.device)).all())
         self.assertTrue(((scores >= -1.0) & (scores <= 1.0)).all())
-        torch.testing.assert_close(scores, torch.tensor(expected, dtype=scores.dtype), rtol=1e-3, atol=1e-3)

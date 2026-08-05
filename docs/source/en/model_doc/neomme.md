@@ -25,7 +25,7 @@ rendered properly in your Markdown viewer.
 ## Overview
 
 NeoMME is a multimodal encoder for text and document images. It uses one backbone for both modalities and provides
-multi-vector MaxSim embeddings and attention-pooled dense embeddings.
+multi-vector MaxSim embeddings and mean-pooled dense embeddings.
 
 ## Usage
 
@@ -47,8 +47,8 @@ documents = processor(
 )
 
 with torch.no_grad():
-    query_embeddings = model(**queries).multivector_embeddings
-    document_embeddings = model(**documents).multivector_embeddings
+    query_embeddings = model(**queries).embeddings
+    document_embeddings = model(**documents).embeddings
 
 scores = processor.score_retrieval(query_embeddings, document_embeddings)
 ```

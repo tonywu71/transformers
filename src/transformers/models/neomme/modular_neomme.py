@@ -345,31 +345,6 @@ class NeoMMEEncoderLayer(GradientCheckpointingLayer):
         return hidden_states + self.residual_scale * mlp_output
 
 
-class NeoMMEAttentionPooler(nn.Module):
-    """Latent-attention pooling for dense retrieval embeddings."""
-
-    num_attention_heads: int = 8
-    num_latents: int = 1
-
-    def __init__(self, config: NeoMMEConfig):
-        super().__init__()
-        self.query = nn.Parameter(torch.empty(self.num_latents, config.hidden_size))
-        self.attn = nn.MultiheadAttention(config.hidden_size, self.num_attention_heads, batch_first=True)
-        self.norm = nn.RMSNorm(config.hidden_size, eps=config.norm_eps)
-
-    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        """`(batch_size, seq_len, hidden_size)` hidden states and a bool attention mask."""
-        query = self.query.to(hidden_states.dtype).expand(
-            hidden_states.shape[0], -1, -1
-        )  # (batch_size, num_latents, hidden_size)
-        pooled, _ = self.attn(
-            query, hidden_states, hidden_states, key_padding_mask=~attention_mask, need_weights=False
-        )
-        # All-padding rows: softmax is NaN; overwrite with 0 (0 * NaN stays NaN).
-        pooled = pooled.masked_fill(~attention_mask.any(-1)[:, None, None], 0.0)
-        return self.norm(pooled.mean(1))  # (batch_size, hidden_size)
-
-
 @auto_docstring
 class NeoMMEPreTrainedModel(PreTrainedModel):
     config: NeoMMEConfig
@@ -418,12 +393,6 @@ class NeoMMEPreTrainedModel(PreTrainedModel):
             init.zeros_(module.down_proj.weight)
         elif isinstance(module, NeoMMEEncoderLayer):
             init.copy_(module.lambdas, torch.tensor([1.0, 0.0]))
-        elif isinstance(module, NeoMMEAttentionPooler):
-            init.normal_(module.query, mean=0.0, std=module.query.shape[-1] ** -0.5)
-            init.xavier_uniform_(module.attn.in_proj_weight)
-            init.zeros_(module.attn.in_proj_bias)
-            init.normal_(module.attn.out_proj.weight, mean=0.0, std=std)
-            init.zeros_(module.attn.out_proj.bias)
         elif isinstance(module, NeoMMEForRetrieval):
             init.normal_(module.embedding_proj_layer.weight, mean=0.0, std=std)
         elif isinstance(module, NeoMMERotaryEmbedding):
@@ -669,7 +638,7 @@ class NeoMMEForRetrievalOutput(ModelOutput):
     r"""
     loss (`torch.FloatTensor` of shape `(1,)`, *optional*):
         Contrastive loss placeholder, always `None` for this model.
-    multivector_embeddings (`torch.FloatTensor` of shape `(batch_size, sequence_length, embedding_dim)`, *optional*):
+    embeddings (`torch.FloatTensor` of shape `(batch_size, sequence_length, embedding_dim)`, *optional*):
         Per-token late-interaction embeddings, L2-normalized per token with padding rows zeroed. Scored
         with MaxSim.
     dense_embeddings (`torch.FloatTensor` of shape `(batch_size, hidden_size)`, *optional*):
@@ -678,7 +647,7 @@ class NeoMMEForRetrievalOutput(ModelOutput):
     """
 
     loss: torch.FloatTensor | None = None
-    multivector_embeddings: torch.FloatTensor | None = None
+    embeddings: torch.FloatTensor | None = None
     dense_embeddings: torch.FloatTensor | None = None
     last_hidden_state: torch.FloatTensor | None = None
     hidden_states: tuple[torch.FloatTensor] | None = None
@@ -698,7 +667,6 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
         self.config = config
         self.model = NeoMMEModel(config)
         self.embedding_proj_layer = nn.Linear(config.hidden_size, config.embedding_dim, bias=False)
-        self.pooler = NeoMMEAttentionPooler(config)
         self.post_init()
 
     def get_input_embeddings(self):
@@ -746,7 +714,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
             attention_mask = torch.ones(hidden_states.shape[:2], dtype=torch.bool, device=hidden_states.device)
 
         return NeoMMEForRetrievalOutput(
-            multivector_embeddings=self._multivector(hidden_states, attention_mask) if output_multivector else None,
+            embeddings=self._multivector(hidden_states, attention_mask) if output_multivector else None,
             dense_embeddings=self._dense(hidden_states, attention_mask, dense_dim) if output_dense else None,
             last_hidden_state=hidden_states,
             hidden_states=outputs.hidden_states,
@@ -771,7 +739,7 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
             inputs_embeds=inputs_embeds,
             output_dense=False,
             **kwargs,
-        ).multivector_embeddings
+        ).embeddings
 
     def get_dense_embeddings(
         self,
@@ -807,7 +775,8 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
     def _dense(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, dense_dim: int | None = None
     ) -> torch.Tensor:
-        pooled = self.pooler(hidden_states, attention_mask.bool())  # (batch_size, hidden_size)
+        expanded_mask = attention_mask.unsqueeze(-1).expand(hidden_states.shape).to(hidden_states.dtype)
+        pooled = (hidden_states * expanded_mask).sum(1) / expanded_mask.sum(1).clamp_min(1e-9)
         if dense_dim is None:
             return F.normalize(pooled, dim=-1)
 
