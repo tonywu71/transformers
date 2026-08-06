@@ -554,15 +554,18 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
             model(input_ids=input_ids, output_dense=False, output_multivector=False)
 
     def test_fully_padded_row_pooling(self):
-        config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
-        input_mask[0] = 0
-        model = NeoMMEForRetrieval(config).to(torch_device).eval()
-        output = model(input_ids=input_ids, attention_mask=input_mask)
+        for dense_pooling in ("mean", "first_token"):
+            with self.subTest(dense_pooling=dense_pooling):
+                _, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
+                config = self.model_tester.get_config(dense_pooling=dense_pooling)
+                input_mask[0] = 0
+                model = NeoMMEForRetrieval(config).to(torch_device).eval()
+                output = model(input_ids=input_ids, attention_mask=input_mask)
 
-        self.assertTrue(torch.isfinite(output.dense_embeddings).all())
-        self.assertTrue(torch.isfinite(output.embeddings).all())
-        self.assertTrue((output.embeddings[0] == 0).all())
-        self.assertTrue((output.dense_embeddings[0] == 0).all())
+                self.assertTrue(torch.isfinite(output.dense_embeddings).all())
+                self.assertTrue(torch.isfinite(output.embeddings).all())
+                self.assertTrue((output.embeddings[0] == 0).all())
+                self.assertTrue((output.dense_embeddings[0] == 0).all())
 
     def test_dense_head_uses_masked_mean_pooling(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
@@ -576,6 +579,25 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         expanded_mask = input_mask.unsqueeze(-1).expand(hidden_states.shape).to(hidden_states.dtype)
         expected = (hidden_states * expanded_mask).sum(1) / expanded_mask.sum(1).clamp_min(1e-9)
         torch.testing.assert_close(actual, torch.nn.functional.normalize(expected, dim=-1))
+
+    def test_dense_head_uses_first_token_pooling(self):
+        """`first_token` selects position 0 of a left-aligned row, matching Sentence Transformers CLS pooling."""
+        _, input_ids, _, _ = self.model_tester.prepare_config_and_inputs()
+        config = self.model_tester.get_config(dense_pooling="first_token")
+        input_mask = torch.ones_like(input_ids)
+        input_mask[0, 3:] = 0  # right padding, the layout NeoMMEProcessor emits
+        model = NeoMMEForRetrieval(config).to(torch_device).eval()
+
+        with torch.no_grad():
+            hidden_states = model.model(input_ids=input_ids, attention_mask=input_mask).last_hidden_state
+            actual = model(input_ids=input_ids, attention_mask=input_mask).dense_embeddings
+
+        torch.testing.assert_close(actual, torch.nn.functional.normalize(hidden_states[:, 0], dim=-1))
+
+    def test_config_rejects_unported_dense_pooling(self):
+        """The research `attention` pooler is a learned module the port cannot represent."""
+        with self.assertRaises(ValueError):
+            self.model_tester.get_config(dense_pooling="attention")
 
 
 @slow
