@@ -109,21 +109,21 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
             "{{ messages[0]['content'] }}"
             "{% if task == 'query' %}{% for _ in range(query_expand) %} <mask>{% endfor %}{% endif %}"
         )
+        processor.chat_template = template
         conversation = [{"role": "user", "content": "hello"}]
 
         query_ids = processor.apply_chat_template(
             conversation,
-            chat_template=template,
             tokenize=True,
             task="query",
             query_expand=processor.query_expand,
-        )[0]
+        )
         self.assertEqual(query_ids.count(self.marker_ids["<query>"]), 1)
         self.assertEqual(query_ids.count(self.marker_ids["<mask>"]), processor.query_expand)
 
         document_ids = processor.apply_chat_template(
-            conversation, chat_template=template, tokenize=True, task="document", query_expand=processor.query_expand
-        )[0]
+            conversation, tokenize=True, task="document", query_expand=processor.query_expand
+        )
         self.assertEqual(document_ids.count(self.marker_ids["<doc>"]), 1)
         self.assertNotIn(self.marker_ids["<mask>"], document_ids)
 
