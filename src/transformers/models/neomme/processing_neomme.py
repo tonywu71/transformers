@@ -486,24 +486,33 @@ class NeoMMEProcessor(ProcessorMixin):
     def _embedding_kind(self, embeddings: torch.Tensor | list[torch.Tensor], name: str) -> tuple[str, int]:
         """Validate one embedding collection and return its representation kind and dimension."""
         if isinstance(embeddings, torch.Tensor):
-            rank = embeddings.dim()
-            if rank not in (2, 3):
-                raise ValueError(f"`{name}` must be a 2-D dense tensor or a 3-D multi-vector tensor, got {rank}-D.")
-            return ("multi-vector" if rank == 3 else "dense"), embeddings.shape[-1]
+            if embeddings.dim() == 2:
+                return "dense", embeddings.shape[-1]
+            if embeddings.dim() == 3:
+                return "multi-vector", embeddings.shape[-1]
+            raise ValueError(
+                f"`{name}` must be a 2-D dense tensor or a 3-D multi-vector tensor, got {embeddings.dim()}-D."
+            )
 
-        if not isinstance(embeddings[0], torch.Tensor):
+        if any(not isinstance(embedding, torch.Tensor) for embedding in embeddings):
             raise ValueError(f"`{name}` must contain tensors.")
-        rank = embeddings[0].dim()
-        if rank not in (1, 2):
+        ranks = {embedding.dim() for embedding in embeddings}
+        if len(ranks) != 1:
+            raise ValueError(f"`{name}` must contain tensors of one consistent rank, got {sorted(ranks)}.")
+        rank = ranks.pop()
+        if rank == 1:
+            kind = "dense"
+        elif rank == 2:
+            kind = "multi-vector"
+        else:
             raise ValueError(
                 f"`{name}` must contain 1-D dense vectors or 2-D multi-vector grids, got {rank}-D entries."
             )
-        if any(not isinstance(embedding, torch.Tensor) or embedding.dim() != rank for embedding in embeddings):
-            raise ValueError(f"`{name}` must contain tensors of one consistent rank.")
+
         dimensions = {embedding.shape[-1] for embedding in embeddings}
         if len(dimensions) != 1:
             raise ValueError(f"`{name}` must use one consistent embedding dimension, got {sorted(dimensions)}.")
-        return ("multi-vector" if rank == 2 else "dense"), dimensions.pop()
+        return kind, dimensions.pop()
 
     def _as_dense(self, embeddings: torch.Tensor | list[torch.Tensor]) -> torch.Tensor:
         return (
