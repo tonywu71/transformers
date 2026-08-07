@@ -219,20 +219,20 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         image_inputs = processor(images=self.prepare_image_inputs())
         self.assertSetEqual(set(image_inputs.keys()), set(processor.model_input_names))
         # Text queries are the other retrieval side: no vision keys.
-        query_inputs = processor(text=["hello"], text_role="query")
+        query_inputs = processor(text=["hello"], task="query")
         self.assertSetEqual(set(query_inputs.keys()), {"input_ids", "attention_mask"})
 
     def test_padding_and_return_tensors(self):
         """Padding and `return_tensors` used to be dropped; only `max_length` survived the merge."""
         processor = self.get_processor()
 
-        padded = processor(text=["hello world", "a"], text_role="document", padding="max_length", max_length=32)
+        padded = processor(text=["hello world", "a"], task="document", padding="max_length", max_length=32)
         self.assertEqual(padded["input_ids"].shape, (2, 32))
         self.assertEqual(int(padded["attention_mask"][1].sum()), 2)
 
         for return_tensors, expected in (("np", np.ndarray), ("pt", torch.Tensor)):
             with self.subTest(return_tensors=return_tensors):
-                batch = processor(text=["hello world"], text_role="query", return_tensors=return_tensors)
+                batch = processor(text=["hello world"], task="query", return_tensors=return_tensors)
                 self.assertIsInstance(batch["input_ids"], expected)
 
     def test_unsupported_text_kwargs_raise(self):
@@ -253,7 +253,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
         for side in ("right", "left"):
             processor.tokenizer.init_kwargs["padding_side"] = side
-            self.assertEqual(processor(text=["hello"], text_role="query")["input_ids"].shape[0], 1)
+            self.assertEqual(processor(text=["hello"], task="query")["input_ids"].shape[0], 1)
 
         processor.tokenizer.init_kwargs.pop("padding_side", None)
         # Asking for it explicitly still raises: this processor always right-pads.
@@ -264,7 +264,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     def test_query_marker_and_expansion(self):
         processor = self.get_processor()
-        batch = processor(text=["hello world", "a"], text_role="query")
+        batch = processor(text=["hello world", "a"], task="query")
         first = batch["input_ids"][0].tolist()
 
         self.assertEqual(first[0], self.marker_ids["<query>"])
@@ -276,7 +276,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     def test_query_truncation_preserves_markers(self):
         processor = self.get_processor()
         max_length = 1 + 1 + processor.query_expand
-        ids = processor(text=["hello world text"], text_role="query", max_length=max_length)["input_ids"][0].tolist()
+        ids = processor(text=["hello world text"], task="query", max_length=max_length)["input_ids"][0].tolist()
 
         self.assertEqual(len(ids), max_length)
         self.assertEqual(ids[0], self.marker_ids["<query>"])
@@ -285,11 +285,11 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     def test_query_expansion_fits_max_length(self):
         processor = self.get_processor()
         with self.assertRaises(ValueError):
-            processor(text=["hello"], text_role="query", max_length=processor.query_expand)
+            processor(text=["hello"], task="query", max_length=processor.query_expand)
 
     def test_document_marker(self):
         processor = self.get_processor()
-        batch = processor(text=["hello world", ""], text_role="document")
+        batch = processor(text=["hello world", ""], task="document")
         first = batch["input_ids"][0].tolist()
 
         self.assertEqual(first[0], self.marker_ids["<doc>"])
@@ -303,15 +303,15 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
 
     def test_document_truncation(self):
         processor = self.get_processor()
-        ids = processor(text=["hello world text"], text_role="document", max_length=2)["input_ids"][0].tolist()
+        ids = processor(text=["hello world text"], task="document", max_length=2)["input_ids"][0].tolist()
         self.assertEqual(len(ids), 2)
         self.assertEqual(ids[0], self.marker_ids["<doc>"])
         self.assertNotIn(self.marker_ids["<mask>"], ids)
 
-    def test_invalid_text_role_raises(self):
+    def test_invalid_task_raises(self):
         processor = self.get_processor()
         with self.assertRaises(ValueError):
-            processor(text=["hello"], text_role="passage")
+            processor(text=["hello"], task="passage")
 
     def test_one_modality_per_call(self):
         processor = self.get_processor()
@@ -329,7 +329,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         )
 
         with self.assertRaises(ValueError) as raised:
-            processor(text=["hello world"], text_role="document")
+            processor(text=["hello world"], task="document")
         self.assertIn("row", str(raised.exception))
 
     def test_image_layout(self):

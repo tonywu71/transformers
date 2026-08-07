@@ -647,14 +647,14 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     def _embed_image_pair(self, head: str) -> tuple["torch.Tensor", "torch.Tensor"]:
         """`(queries, image documents)` from hf-internal-testing/document-visual-retrieval-test."""
-        queries = self.processor(text=self.dataset["query"][:], text_role="query")
+        queries = self.processor(text=self.dataset["query"][:], task="query")
         images = self.processor(images=self.dataset["image"][:])
         return self._embed(queries, head), self._embed(images, head)
 
     def _embed_text_pair(self, head: str) -> tuple["torch.Tensor", "torch.Tensor"]:
         """`(queries, text documents)`: the same retrieval task with `<doc>` passages instead of pages."""
-        queries = self.processor(text=self.TEXT_QUERIES, text_role="query")
-        documents = self.processor(text=self.TEXT_DOCUMENTS, text_role="document")
+        queries = self.processor(text=self.TEXT_QUERIES, task="query")
+        documents = self.processor(text=self.TEXT_DOCUMENTS, task="document")
         return self._embed(queries, head), self._embed(documents, head)
 
     def _assert_diagonal_retrieval(self, scores: "torch.Tensor") -> None:

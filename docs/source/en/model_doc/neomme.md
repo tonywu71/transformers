@@ -39,10 +39,10 @@ checkpoint = "Hcompany/neomme-250M-retriever-transformers-v1.0"
 processor = NeoMMEProcessor.from_pretrained(checkpoint)
 model = NeoMMEForRetrieval.from_pretrained(checkpoint)
 
-queries = processor(text=["What color is a ripe banana?"], text_role="query", return_tensors="pt")
+queries = processor(text=["What color is a ripe banana?"], task="query", return_tensors="pt")
 documents = processor(
     text=["Bananas turn yellow as they ripen.", "Apples can be red or green."],
-    text_role="document",
+    task="document",
     return_tensors="pt",
 )
 

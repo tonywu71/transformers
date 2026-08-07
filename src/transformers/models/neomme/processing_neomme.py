@@ -141,11 +141,11 @@ class NeoMMEProcessor(ProcessorMixin):
         self,
         images: ImageInput | None = None,
         text: TextInput | list[TextInput] | None = None,
-        text_role: Literal["query", "document"] = "query",
+        task: Literal["query", "document"] = "query",
         **kwargs: Unpack[NeoMMEProcessorKwargs],
     ) -> BatchFeature:
         r"""
-        text_role (`str`, *optional*, defaults to `"query"`):
+        task (`str`, *optional*, defaults to `"query"`):
             Which marker convention `text` gets: `"query"` prefixes `<query>` and appends the `<mask>`
             expansion, `"document"` prefixes `<doc>`. Ignored when `images` is passed — images are always
             documents.
@@ -173,11 +173,11 @@ class NeoMMEProcessor(ProcessorMixin):
         # What the caller actually named, flat or nested, as opposed to what `_merge_kwargs` injected.
         requested = set(kwargs) | set(kwargs.get("text_kwargs", {}))
         text_kwargs = self._supported_text_kwargs(output_kwargs["text_kwargs"], requested)
-        if text_role == "query":
+        if task == "query":
             return self.process_queries(text, **text_kwargs)
-        if text_role == "document":
+        if task == "document":
             return self.process_text_documents(text, **text_kwargs)
-        raise ValueError(f"text_role={text_role!r} is not supported: expected 'query' or 'document'.")
+        raise ValueError(f"task={task!r} is not supported: expected 'query' or 'document'.")
 
     def process_queries(
         self,
