@@ -554,36 +554,19 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
             model(input_ids=input_ids, output_dense=False, output_multivector=False)
 
     def test_fully_padded_row_pooling(self):
-        for dense_pooling in ("mean", "first_token"):
-            with self.subTest(dense_pooling=dense_pooling):
-                _, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
-                config = self.model_tester.get_config(dense_pooling=dense_pooling)
-                input_mask[0] = 0
-                model = NeoMMEForRetrieval(config).to(torch_device).eval()
-                output = model(input_ids=input_ids, attention_mask=input_mask)
-
-                self.assertTrue(torch.isfinite(output.dense_embeddings).all())
-                self.assertTrue(torch.isfinite(output.embeddings).all())
-                self.assertTrue((output.embeddings[0] == 0).all())
-                self.assertTrue((output.dense_embeddings[0] == 0).all())
-
-    def test_dense_head_uses_masked_mean_pooling(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
-        input_mask[0, 3:] = 0
+        input_mask[0] = 0
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
+        output = model(input_ids=input_ids, attention_mask=input_mask)
 
-        with torch.no_grad():
-            hidden_states = model.model(input_ids=input_ids, attention_mask=input_mask).last_hidden_state
-            actual = model(input_ids=input_ids, attention_mask=input_mask).dense_embeddings
-
-        expanded_mask = input_mask.unsqueeze(-1).expand(hidden_states.shape).to(hidden_states.dtype)
-        expected = (hidden_states * expanded_mask).sum(1) / expanded_mask.sum(1).clamp_min(1e-9)
-        torch.testing.assert_close(actual, torch.nn.functional.normalize(expected, dim=-1))
+        self.assertTrue(torch.isfinite(output.dense_embeddings).all())
+        self.assertTrue(torch.isfinite(output.embeddings).all())
+        self.assertTrue((output.embeddings[0] == 0).all())
+        self.assertTrue((output.dense_embeddings[0] == 0).all())
 
     def test_dense_head_uses_first_token_pooling(self):
         """`first_token` selects position 0 of a left-aligned row, matching Sentence Transformers CLS pooling."""
-        _, input_ids, _, _ = self.model_tester.prepare_config_and_inputs()
-        config = self.model_tester.get_config(dense_pooling="first_token")
+        config, input_ids, _, _ = self.model_tester.prepare_config_and_inputs()
         input_mask = torch.ones_like(input_ids)
         input_mask[0, 3:] = 0  # right padding, the layout NeoMMEProcessor emits
         model = NeoMMEForRetrieval(config).to(torch_device).eval()
@@ -594,17 +577,12 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
 
         torch.testing.assert_close(actual, torch.nn.functional.normalize(hidden_states[:, 0], dim=-1))
 
-    def test_config_rejects_unported_dense_pooling(self):
-        """The research `attention` pooler is a learned module the port cannot represent."""
-        with self.assertRaises(ValueError):
-            self.model_tester.get_config(dense_pooling="attention")
-
 
 @slow
 @require_torch
 @require_vision
 class NeoMMEModelIntegrationTest(unittest.TestCase):
-    model_name: ClassVar[str | None] = os.environ.get("NEOMME_TRANSFORMERS_MEAN_REPO")
+    model_name: ClassVar[str | None] = os.environ.get("NEOMME_TRANSFORMERS_REPO")
     # Parity is only ever gated in float32; bf16 drift is documented separately and never asserted on.
     model_dtype: ClassVar["torch.dtype"] = torch.float32 if is_torch_available() else None
 
@@ -620,7 +598,7 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if cls.model_name is None:
-            raise unittest.SkipTest("set NEOMME_TRANSFORMERS_MEAN_REPO to a mean-pooled NeoMME checkpoint")
+            raise unittest.SkipTest("set NEOMME_TRANSFORMERS_REPO to a NeoMME checkpoint")
         cls.processor = NeoMMEProcessor.from_pretrained(cls.model_name)
         cls.model = NeoMMEForRetrieval.from_pretrained(cls.model_name, dtype=cls.model_dtype)
         cls.model = cls.model.to(torch_device).eval()

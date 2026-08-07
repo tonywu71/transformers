@@ -25,7 +25,7 @@ rendered properly in your Markdown viewer.
 ## Overview
 
 NeoMME is a multimodal encoder for text and document images. It uses one backbone for both modalities and provides
-multi-vector MaxSim embeddings and mean-pooled dense embeddings.
+multi-vector MaxSim embeddings and first-token-pooled dense embeddings.
 
 ## Usage
 

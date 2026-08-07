@@ -700,8 +700,7 @@ class NeoMMEForRetrievalOutput(ModelOutput):
     custom_intro="""
     NeoMME with multi-vector and dense retrieval heads from a single backbone pass. Multi-vector
     embeddings are per-token vectors scored with MaxSim; dense embeddings are one pooled vector per
-    input (`config.dense_pooling`, first-token or masked mean) scored with cosine similarity. See
-    [`NeoMMEProcessor.score_retrieval`].
+    input, pooled from the first token and scored with cosine similarity. See [`NeoMMEProcessor.score_retrieval`].
     """
 )
 class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
@@ -818,13 +817,9 @@ class NeoMMEForRetrieval(NeoMMEPreTrainedModel):
     def _dense(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, dense_dim: int | None = None
     ) -> torch.Tensor:
-        if self.config.dense_pooling == "first_token":
-            # Sentence Transformers CLS pooling: the first real token of a left-aligned sequence. The mask
-            # factor keeps the fully-padded-row invariant (dense vector exactly zero) shared with mean.
-            pooled = hidden_states[:, 0] * attention_mask[:, :1].to(hidden_states.dtype)
-        else:
-            expanded_mask = attention_mask.unsqueeze(-1).expand(hidden_states.shape).to(hidden_states.dtype)
-            pooled = (hidden_states * expanded_mask).sum(1) / expanded_mask.sum(1).clamp_min(1e-9)
+        # Sentence Transformers CLS pooling selects position 0 of a left-aligned sequence. The mask factor
+        # keeps a fully padded row at exactly zero.
+        pooled = hidden_states[:, 0] * attention_mask[:, :1].to(hidden_states.dtype)
         if dense_dim is None:
             return F.normalize(pooled, dim=-1)
 

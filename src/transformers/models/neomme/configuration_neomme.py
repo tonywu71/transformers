@@ -43,11 +43,6 @@ class NeoMMEConfig(PreTrainedConfig):
         Side length in pixels of one image patch.
     embedding_dim (`int`, *optional*, defaults to 128):
         Output dimension of the multi-vector retrieval head. Unrelated to `embedding_rank`.
-    dense_pooling (`str`, *optional*, defaults to `"mean"`):
-        Parameter-free pool producing the dense retrieval vector. `"first_token"` selects the final hidden
-        state of the leading marker token (`<query>` / `<doc>`), matching Sentence Transformers CLS pooling;
-        `"mean"` averages every token under the attention mask. Checkpoints converted before this field
-        existed were trained with mean pooling, which is why it is the default.
     document_token_id (`int`, *optional*, defaults to 5):
         Token id of the `<doc>` marker token.
     image_token_id (`int`, *optional*, defaults to 6):
@@ -91,7 +86,6 @@ class NeoMMEConfig(PreTrainedConfig):
 
     patch_size: int = 32
     embedding_dim: int = 128
-    dense_pooling: str = "mean"
 
     pad_token_id: int | None = 0
     document_token_id: int | None = 5
@@ -99,11 +93,6 @@ class NeoMMEConfig(PreTrainedConfig):
     tie_word_embeddings: bool = True
 
     def __post_init__(self, **kwargs):
-        if self.dense_pooling not in ("first_token", "mean"):
-            raise ValueError(
-                f"dense_pooling must be 'first_token' or 'mean', got {self.dense_pooling!r}. The research "
-                "'attention' pooler is a learned module with no transformers port."
-            )
         if self.num_key_value_heads <= 0 or self.num_attention_heads % self.num_key_value_heads:
             raise ValueError("num_key_value_heads must divide num_attention_heads")
         if self.global_attn_every_n_layers is not None and self.global_attn_every_n_layers <= 0:
