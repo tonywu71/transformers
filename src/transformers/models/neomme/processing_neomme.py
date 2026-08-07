@@ -243,7 +243,7 @@ class NeoMMEProcessor(ProcessorMixin):
                     f"query_expand={self.query_expand} leaves no room for content inside max_length={max_length}"
                 )
 
-        encodings = self.tokenizer(list(text), add_special_tokens=False)["input_ids"]
+        encodings = self._tokenize_content(list(text), content_limit)
         sequences = [[marker_ids["query"]] + list(ids)[:content_limit] + expansion for ids in encodings]
         return self._pad_sequences(sequences, padding=padding, max_length=max_length, return_tensors=return_tensors)
 
@@ -261,7 +261,7 @@ class NeoMMEProcessor(ProcessorMixin):
         content_limit = None if max_length is None else max_length - 1
 
         # An empty string tokenizes to nothing, which would leave a marker-only document.
-        encodings = self.tokenizer([passage or " " for passage in text], add_special_tokens=False)["input_ids"]
+        encodings = self._tokenize_content([passage or " " for passage in text], content_limit)
         sequences = [[marker_ids["document"]] + list(ids)[:content_limit] for ids in encodings]
         return self._pad_sequences(sequences, padding=padding, max_length=max_length, return_tensors=return_tensors)
 
@@ -354,6 +354,15 @@ class NeoMMEProcessor(ProcessorMixin):
             raise ValueError(f"The tokenizer is missing NeoMME marker tokens: {missing}")
         return ids
 
+    def _tokenize_content(self, text: list[str], max_length: int | None) -> list[list[int]]:
+        """Tokenize text content without warning about tokens the NeoMME layout will truncate."""
+        if max_length == 0:
+            return [[] for _ in text]
+        kwargs: dict[str, Any] = {"add_special_tokens": False}
+        if max_length is not None:
+            kwargs.update(truncation=True, max_length=max_length)
+        return self.tokenizer(text, **kwargs)["input_ids"]
+
     def _encode_image_grid(
         self, grid_height: int, grid_width: int, marker_ids: dict[str, int]
     ) -> tuple[list[int], np.ndarray]:
@@ -421,6 +430,8 @@ class NeoMMEProcessor(ProcessorMixin):
         supported = {
             name: text_kwargs[name] for name in ("max_length", "padding", "return_tensors") if name in text_kwargs
         }
+        if text_kwargs.get("truncation") not in (None, False, "do_not_truncate") and "max_length" not in supported:
+            supported["max_length"] = self.tokenizer.model_max_length
         if text_kwargs.get("truncation") is False and text_kwargs.get("max_length") is not None:
             raise ValueError(
                 "truncation=False with a max_length is not supported: the marker and query-expansion layout "

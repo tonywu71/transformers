@@ -336,6 +336,16 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         self.assertEqual(ids[0], self.marker_ids["<doc>"])
         self.assertNotIn(self.marker_ids["<mask>"], ids)
 
+    def test_document_truncation_uses_tokenizer_limit(self):
+        processor = self.get_processor()
+        processor.tokenizer.model_max_length = 5
+        ids = processor(text=["hello world a document query text"], task="document", truncation=True)["input_ids"][
+            0
+        ].tolist()
+
+        self.assertEqual(len(ids), processor.tokenizer.model_max_length)
+        self.assertEqual(ids[0], self.marker_ids["<doc>"])
+
     def test_invalid_task_raises(self):
         processor = self.get_processor()
         with self.assertRaises(ValueError):
