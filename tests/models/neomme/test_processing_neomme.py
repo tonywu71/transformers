@@ -99,6 +99,31 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     def test_apply_chat_template_image(self, batch_size, return_tensors):
         pass
 
+    def test_apply_chat_template_does_not_duplicate_markers(self):
+        processor = self.get_processor()
+        template = (
+            "{% if task == 'query' %}<query>{% else %}<doc>{% endif %} "
+            "{{ messages[0]['content'] }}"
+            "{% if task == 'query' %}{% for _ in range(query_expand) %} <mask>{% endfor %}{% endif %}"
+        )
+        conversation = [{"role": "user", "content": "hello"}]
+
+        query_ids = processor.apply_chat_template(
+            conversation,
+            chat_template=template,
+            tokenize=True,
+            task="query",
+            query_expand=processor.query_expand,
+        )[0]
+        self.assertEqual(query_ids.count(self.marker_ids["<query>"]), 1)
+        self.assertEqual(query_ids.count(self.marker_ids["<mask>"]), processor.query_expand)
+
+        document_ids = processor.apply_chat_template(
+            conversation, chat_template=template, tokenize=True, task="document", query_expand=processor.query_expand
+        )[0]
+        self.assertEqual(document_ids.count(self.marker_ids["<doc>"]), 1)
+        self.assertNotIn(self.marker_ids["<mask>"], document_ids)
+
     def test_tokenizer_defaults_preserved_by_kwargs(self):
         processor_components = self.prepare_components()
         processor_components["tokenizer"] = self.get_component(

@@ -23,7 +23,7 @@ from ...feature_extraction_utils import BatchFeature
 from ...image_utils import ImageInput, is_valid_image
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import TextInput
-from ...utils import auto_docstring, is_torch_available, logging
+from ...utils import TensorType, auto_docstring, is_torch_available, logging
 from ...utils.import_utils import requires
 
 
@@ -136,6 +136,42 @@ class NeoMMEProcessor(ProcessorMixin):
     def model_input_names(self) -> list[str]:
         return ["input_ids", "attention_mask", "position_ids", "pixel_values", "image_grid_hw"]
 
+    def apply_chat_template(
+        self,
+        conversation: list[dict[str, str]] | list[list[dict[str, str]]],
+        chat_template: str | None = None,
+        tools: list[dict] | None = None,
+        documents: list[dict[str, str]] | None = None,
+        add_generation_prompt: bool = False,
+        continue_final_message: bool | str = False,
+        return_assistant_tokens_mask: bool = False,
+        tokenize: bool = False,
+        return_tensors: str | TensorType | None = None,
+        return_dict: bool = False,
+        load_audio_from_video: bool = False,
+        processor_kwargs: dict | None = None,
+        **kwargs,
+    ) -> str:
+        """Apply the chat template without processing its NeoMME markers a second time."""
+        if tokenize:
+            processor_kwargs = dict(processor_kwargs or {})
+            processor_kwargs["_neomme_chat_template_rendered"] = True
+        return super().apply_chat_template(
+            conversation,
+            chat_template=chat_template,
+            tools=tools,
+            documents=documents,
+            add_generation_prompt=add_generation_prompt,
+            continue_final_message=continue_final_message,
+            return_assistant_tokens_mask=return_assistant_tokens_mask,
+            tokenize=tokenize,
+            return_tensors=return_tensors,
+            return_dict=return_dict,
+            load_audio_from_video=load_audio_from_video,
+            processor_kwargs=processor_kwargs,
+            **kwargs,
+        )
+
     @auto_docstring
     def __call__(
         self,
@@ -162,6 +198,7 @@ class NeoMMEProcessor(ProcessorMixin):
         if "task" in kwargs.get("text_kwargs", {}):
             raise ValueError("Pass `task` as a top-level processor argument, not inside `text_kwargs`.")
 
+        chat_template_rendered = kwargs.pop("_neomme_chat_template_rendered", False)
         output_kwargs = self._merge_kwargs(
             NeoMMEProcessorKwargs, tokenizer_init_kwargs=self.tokenizer.init_kwargs, **kwargs
         )
@@ -174,6 +211,10 @@ class NeoMMEProcessor(ProcessorMixin):
             raise ValueError("Pretokenized text is not supported")
         # What the caller actually named, flat or nested, as opposed to what `_merge_kwargs` injected.
         requested = set(kwargs) | set(kwargs.get("text_kwargs", {}))
+        if chat_template_rendered:
+            text_kwargs = {name: value for name, value in output_kwargs["text_kwargs"].items() if name in requested}
+            text_kwargs["add_special_tokens"] = False
+            return BatchFeature(data=dict(self.tokenizer(text, **text_kwargs)))
         text_kwargs = self._supported_text_kwargs(output_kwargs["text_kwargs"], requested)
         if task == "query":
             return self.process_queries(text, **text_kwargs)
