@@ -26,7 +26,14 @@ from ...modeling_outputs import BaseModelOutput, MaskedLMOutput
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
-from ...utils import ModelOutput, TransformersKwargs, auto_docstring, logging, torch_compilable_check
+from ...utils import (
+    ModelOutput,
+    TransformersKwargs,
+    auto_docstring,
+    is_torchdynamo_compiling,
+    logging,
+    torch_compilable_check,
+)
 from ...utils.generic import can_return_tuple, merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from ..llama.modeling_llama import eager_attention_forward, repeat_kv
@@ -541,11 +548,14 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
             (input_ids == self.config.image_token_id) & (previous_ids != self.config.document_token_id)
         ).unsqueeze(-1)
 
-        num_image_tokens = image_mask.sum()
-        torch_compilable_check(
-            num_image_tokens == pixel_values.shape[0],
-            lambda: f"Got {pixel_values.shape[0]} image patches for {int(num_image_tokens)} image placeholder tokens",
-        )
+        if not is_torchdynamo_compiling():
+            num_image_tokens = image_mask.sum()
+            torch_compilable_check(
+                num_image_tokens == pixel_values.shape[0],
+                lambda: (
+                    f"Got {pixel_values.shape[0]} image patches for {int(num_image_tokens)} image placeholder tokens"
+                ),
+            )
         patch_embeds = self.patch_embeddings(pixel_values.to(hidden_states.dtype))  # (num_patches, hidden_size)
         return hidden_states.masked_scatter(image_mask, patch_embeds)
 
