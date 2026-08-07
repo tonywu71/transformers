@@ -59,7 +59,7 @@ def get_resize_scale(
 def get_resize_output_size(
     height: int, width: int, max_side: int | None, max_pixels: int | None, min_pixels: int | None
 ) -> tuple[int, int]:
-    """Compute integer resize dimensions while preserving hard pixel and side bounds."""
+    """Compute integer height and width that follow the configured image size limits."""
     scale = get_resize_scale(height, width, max_side, max_pixels, min_pixels)
     if scale == 1.0:
         return height, width
