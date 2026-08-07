@@ -327,7 +327,20 @@ class NeoMMEProcessor(ProcessorMixin):
         if batch_size < 1:
             raise ValueError(f"batch_size must be at least 1, got {batch_size}")
 
-        if self._is_multi_vector(passage_embeddings):
+        query_kind, query_dim = self._embedding_kind(query_embeddings, "query_embeddings")
+        passage_kind, passage_dim = self._embedding_kind(passage_embeddings, "passage_embeddings")
+        if query_kind != passage_kind:
+            raise ValueError(
+                "`query_embeddings` and `passage_embeddings` must both be dense or both be multi-vector, "
+                f"but got {query_kind} queries and {passage_kind} passages."
+            )
+        if query_dim != passage_dim:
+            raise ValueError(
+                "`query_embeddings` and `passage_embeddings` must have the same embedding dimension, "
+                f"but got {query_dim} and {passage_dim}."
+            )
+
+        if query_kind == "multi-vector":
             scores = self._maxsim_in_blocks(query_embeddings, passage_embeddings, batch_size, normalize, output_device)
         else:
             queries = self._as_dense(query_embeddings)  # (num_queries, dim)
@@ -474,10 +487,27 @@ class NeoMMEProcessor(ProcessorMixin):
             rows.append(torch.cat(columns, dim=1).to(output_device))
         return torch.cat(rows, dim=0)  # (num_queries, num_passages)
 
-    def _is_multi_vector(self, embeddings: torch.Tensor | list[torch.Tensor]) -> bool:
+    def _embedding_kind(self, embeddings: torch.Tensor | list[torch.Tensor], name: str) -> tuple[str, int]:
+        """Validate one embedding collection and return its representation kind and dimension."""
         if isinstance(embeddings, torch.Tensor):
-            return embeddings.dim() == 3
-        return embeddings[0].dim() == 2
+            rank = embeddings.dim()
+            if rank not in (2, 3):
+                raise ValueError(f"`{name}` must be a 2-D dense tensor or a 3-D multi-vector tensor, got {rank}-D.")
+            return ("multi-vector" if rank == 3 else "dense"), embeddings.shape[-1]
+
+        if not isinstance(embeddings[0], torch.Tensor):
+            raise ValueError(f"`{name}` must contain tensors.")
+        rank = embeddings[0].dim()
+        if rank not in (1, 2):
+            raise ValueError(
+                f"`{name}` must contain 1-D dense vectors or 2-D multi-vector grids, got {rank}-D entries."
+            )
+        if any(not isinstance(embedding, torch.Tensor) or embedding.dim() != rank for embedding in embeddings):
+            raise ValueError(f"`{name}` must contain tensors of one consistent rank.")
+        dimensions = {embedding.shape[-1] for embedding in embeddings}
+        if len(dimensions) != 1:
+            raise ValueError(f"`{name}` must use one consistent embedding dimension, got {sorted(dimensions)}.")
+        return ("multi-vector" if rank == 2 else "dense"), dimensions.pop()
 
     def _as_dense(self, embeddings: torch.Tensor | list[torch.Tensor]) -> torch.Tensor:
         return (

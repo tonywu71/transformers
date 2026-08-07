@@ -449,6 +449,18 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
             passages = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
             torch.testing.assert_close(processor.score_retrieval(queries, passages)[0], torch.tensor([1.0, 0.0]))
 
+        with self.subTest(mode="rejects_mixed_representations"):
+            dense = torch.ones(2, 3)
+            multi_vector = torch.ones(2, 4, 3)
+            with self.assertRaisesRegex(ValueError, "must both be dense or both be multi-vector"):
+                processor.score_retrieval(dense, multi_vector)
+            with self.assertRaisesRegex(ValueError, "must both be dense or both be multi-vector"):
+                processor.score_retrieval(multi_vector, dense)
+
+        with self.subTest(mode="rejects_mismatched_dimensions"):
+            with self.assertRaisesRegex(ValueError, "same embedding dimension"):
+                processor.score_retrieval(torch.ones(2, 3), torch.ones(4, 5))
+
         with self.subTest(mode="rejects_empty"):
             with self.assertRaises(ValueError):
                 processor.score_retrieval(torch.zeros(0, 2), torch.ones(1, 2))
