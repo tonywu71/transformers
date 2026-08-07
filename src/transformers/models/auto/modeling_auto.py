@@ -1054,7 +1054,6 @@ MODEL_FOR_RETRIEVAL_MAPPING_NAMES = OrderedDict(
     [
         ("colmodernvbert", "ColModernVBertForRetrieval"),
         ("colpali", "ColPaliForRetrieval"),
-        ("neomme", "NeoMMEForRetrieval"),
     ]
 )
 

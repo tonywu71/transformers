@@ -558,6 +558,11 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
         with self.assertRaises(ValueError):
             model(input_ids=input_ids, output_dense=False, output_multivector=False)
 
+    def test_retrieval_class_is_not_auto_mapped(self):
+        from transformers.models.auto.modeling_auto import MODEL_FOR_RETRIEVAL_MAPPING_NAMES
+
+        self.assertNotIn("neomme", MODEL_FOR_RETRIEVAL_MAPPING_NAMES)
+
     def test_fully_padded_row_pooling(self):
         config, input_ids, input_mask, _ = self.model_tester.prepare_config_and_inputs()
         input_mask[0] = 0
