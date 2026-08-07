@@ -13,6 +13,8 @@
 # limitations under the License.
 """Image processor class for NeoMME."""
 
+import math
+
 import torch
 from torchvision.transforms.v2 import functional as tvF
 
@@ -52,6 +54,28 @@ def get_resize_scale(
     if max_pixels is not None:
         scale = min(scale, (max_pixels / (height * width)) ** 0.5)
     return scale
+
+
+def get_resize_output_size(
+    height: int, width: int, max_side: int | None, max_pixels: int | None, min_pixels: int | None
+) -> tuple[int, int]:
+    """Compute integer resize dimensions while preserving hard pixel and side bounds."""
+    scale = get_resize_scale(height, width, max_side, max_pixels, min_pixels)
+    if scale == 1.0:
+        return height, width
+
+    needs_minimum = min_pixels is not None and height * width < min_pixels
+    if needs_minimum:
+        resized_height = max(1, math.ceil(height * scale))
+        resized_width = max(1, math.ceil(width * scale))
+        exceeds_cap = (max_side is not None and max(resized_height, resized_width) > max_side) or (
+            max_pixels is not None and resized_height * resized_width > max_pixels
+        )
+        if not exceeds_cap:
+            return resized_height, resized_width
+
+    # Caps take precedence over the floor. Rounding down keeps both hard upper bounds intact.
+    return max(1, math.floor(height * scale)), max(1, math.floor(width * scale))
 
 
 def convert_image_to_patches(image: "torch.Tensor", patch_size: int) -> "torch.Tensor":
@@ -182,14 +206,13 @@ class NeoMMEImageProcessor(TorchvisionBackend):
         images_kwargs = images_kwargs or {}
         patch_size = images_kwargs.get("patch_size") or self.patch_size
         if images_kwargs.get("do_resize", self.do_resize):
-            scale = get_resize_scale(
+            height, width = get_resize_output_size(
                 height,
                 width,
                 images_kwargs.get("max_side", self.max_side),
                 images_kwargs.get("max_pixels", self.max_pixels),
                 images_kwargs.get("min_pixels", self.min_pixels),
             )
-            height, width = max(1, round(height * scale)), max(1, round(width * scale))
         return -(-height // patch_size) * (-(-width // patch_size))
 
     def _resize_to_budget(
@@ -201,10 +224,10 @@ class NeoMMEImageProcessor(TorchvisionBackend):
         resample: "PILImageResampling | tvF.InterpolationMode | int | None",
     ) -> "torch.Tensor":
         height, width = image.shape[-2], image.shape[-1]
-        scale = get_resize_scale(height, width, max_side, max_pixels, min_pixels)
-        if scale == 1.0:
+        resized_height, resized_width = get_resize_output_size(height, width, max_side, max_pixels, min_pixels)
+        if (resized_height, resized_width) == (height, width):
             return image
-        size = SizeDict(height=max(1, round(height * scale)), width=max(1, round(width * scale)))
+        size = SizeDict(height=resized_height, width=resized_width)
         # `antialias=True` is the default, passed explicitly because it is what holds this backend to the
         # PIL one: without it a downscaled page differs by up to 166 of 255 levels, not one.
         return self.resize(image=image, size=size, resample=resample, antialias=True)
