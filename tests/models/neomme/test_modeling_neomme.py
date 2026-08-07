@@ -318,10 +318,12 @@ class NeoMMEModelTest(ModelTesterMixin, unittest.TestCase):
 
     def test_partial_rotary_factor_multiple_of_four(self):
         """Rotating dims must be a multiple of 4 (two M-RoPE axes × pairs); used to silently round down."""
-        with self.assertRaisesRegex(ValueError, "not a multiple of 4"):
+        with self.assertRaisesRegex(ValueError, "needs at least 4"):
             NeoMMEConfig(head_dim=8)
         with self.assertRaisesRegex(ValueError, "not a multiple of 4"):
             NeoMMEConfig(head_dim=64, rope_parameters={"full_attention": {"partial_rotary_factor": 0.3}})
+        with self.assertRaisesRegex(ValueError, "needs at least 4"):
+            NeoMMEConfig(head_dim=2, global_attn_every_n_layers=1)
         # A factor that lands on a multiple of 4 is fine, on either layer type.
         config = NeoMMEConfig(head_dim=64, rope_parameters={"full_attention": {"partial_rotary_factor": 0.75}})
         self.assertEqual(config.rope_parameters["full_attention"]["partial_rotary_factor"], 0.75)

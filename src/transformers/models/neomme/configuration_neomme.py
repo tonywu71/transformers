@@ -180,6 +180,11 @@ class NeoMMEConfig(PreTrainedConfig):
                     f"rope_parameters[{layer_type!r}]['partial_rotary_factor']={partial_rotary_factor} is "
                     "outside (0.0, 1.0]: it is the fraction of each head's dims that carries position."
                 )
+            if rotary_dim < 4:
+                raise ValueError(
+                    f"rope_parameters[{layer_type!r}]['partial_rotary_factor']={partial_rotary_factor} rotates "
+                    f"{rotary_dim} of head_dim={self.head_dim} dims, but two-axis M-RoPE needs at least 4."
+                )
             if rotary_dim % 4:
                 raise ValueError(
                     f"rope_parameters[{layer_type!r}]['partial_rotary_factor']={partial_rotary_factor} rotates "
