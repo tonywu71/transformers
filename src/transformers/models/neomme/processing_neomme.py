@@ -464,27 +464,23 @@ class NeoMMEProcessor(ProcessorMixin):
         output_device: str | torch.device,
     ) -> torch.Tensor:
         """Compute MaxSim scores in query-passage blocks."""
-        query_grids, query_mask = _as_padded_grids(
-            query_embeddings
-        )  # (num_queries, query_length, dim), (num_queries, query_length)
-        passage_grids, passage_mask = _as_padded_grids(
-            passage_embeddings
-        )  # (num_passages, passage_length, dim), (num_passages, passage_length)
-
         rows: list[torch.Tensor] = []
-        for query_start in range(0, len(query_grids), batch_size):
-            queries = slice(query_start, query_start + batch_size)
-            columns = [
-                maxsim_scores(
-                    query_grids[queries],
-                    passage_grids[passage_start : passage_start + batch_size],
-                    query_mask[queries],
-                    passage_mask[passage_start : passage_start + batch_size],
+        for query_start in range(0, len(query_embeddings), batch_size):
+            query_block = query_embeddings[query_start : query_start + batch_size]
+            query_grids, query_mask = _as_padded_grids(query_block)
+            columns: list[torch.Tensor] = []
+            for passage_start in range(0, len(passage_embeddings), batch_size):
+                passage_block = passage_embeddings[passage_start : passage_start + batch_size]
+                passage_grids, passage_mask = _as_padded_grids(passage_block)
+                scores = maxsim_scores(
+                    query_grids,
+                    passage_grids,
+                    query_mask,
+                    passage_mask,
                     normalize=normalize,
                 )
-                for passage_start in range(0, len(passage_grids), batch_size)
-            ]
-            rows.append(torch.cat(columns, dim=1).to(output_device))
+                columns.append(scores.to(output_device))
+            rows.append(torch.cat(columns, dim=1))
         return torch.cat(rows, dim=0)  # (num_queries, num_passages)
 
     def _embedding_kind(self, embeddings: torch.Tensor | list[torch.Tensor], name: str) -> tuple[str, int]:

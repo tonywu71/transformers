@@ -15,6 +15,7 @@
 
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 from parameterized import parameterized
@@ -35,6 +36,8 @@ if is_vision_available():
 
 if is_torch_available():
     import torch
+
+    from transformers.models.neomme.processing_neomme import _pad_grids
 
 
 @require_torch
@@ -470,3 +473,15 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         with self.subTest(mode="rejects_bad_batch_size"):
             with self.assertRaises(ValueError):
                 processor.score_retrieval(torch.ones(1, 2), torch.ones(1, 2), batch_size=0)
+
+    def test_maxsim_pads_only_the_current_blocks(self):
+        processor = self.get_processor()
+        queries = [torch.randn(length, 4) for length in (2, 3, 4, 5, 6)]
+        passages = [torch.randn(length, 4) for length in (2, 3, 4, 5, 6, 7, 8)]
+        expected = processor.score_retrieval(queries, passages)
+
+        with mock.patch("transformers.models.neomme.processing_neomme._pad_grids", wraps=_pad_grids) as pad_grids:
+            actual = processor.score_retrieval(queries, passages, batch_size=2)
+
+        torch.testing.assert_close(actual, expected)
+        self.assertTrue(all(len(call.args[0]) <= 2 for call in pad_grids.call_args_list))
