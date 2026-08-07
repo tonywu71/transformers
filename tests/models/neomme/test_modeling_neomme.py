@@ -13,7 +13,6 @@
 # limitations under the License.
 """Testing suite for the PyTorch NeoMME model."""
 
-import os
 import unittest
 from typing import ClassVar
 from unittest.mock import patch
@@ -561,6 +560,8 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
     def test_retrieval_class_is_not_auto_mapped(self):
         from transformers.models.auto.modeling_auto import MODEL_FOR_RETRIEVAL_MAPPING_NAMES
 
+        # Keep the combined two-head class directly importable, but do not let AutoModelForRetrieval or
+        # Sentence Transformers select it instead of the AutoModel backbone.
         self.assertNotIn("neomme", MODEL_FOR_RETRIEVAL_MAPPING_NAMES)
 
     def test_fully_padded_row_pooling(self):
@@ -592,7 +593,7 @@ class NeoMMEForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
 @require_torch
 @require_vision
 class NeoMMEModelIntegrationTest(unittest.TestCase):
-    model_name: ClassVar[str | None] = os.environ.get("NEOMME_TRANSFORMERS_REPO")
+    model_name: ClassVar[str] = "Hcompany/NeoMME-250M-Retriever"
     # Parity is only ever gated in float32; bf16 drift is documented separately and never asserted on.
     model_dtype: ClassVar["torch.dtype"] = torch.float32 if is_torch_available() else None
 
@@ -607,8 +608,6 @@ class NeoMMEModelIntegrationTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if cls.model_name is None:
-            raise unittest.SkipTest("set NEOMME_TRANSFORMERS_REPO to a NeoMME checkpoint")
         cls.processor = NeoMMEProcessor.from_pretrained(cls.model_name)
         cls.model = NeoMMEForRetrieval.from_pretrained(cls.model_name, dtype=cls.model_dtype)
         cls.model = cls.model.to(torch_device).eval()
