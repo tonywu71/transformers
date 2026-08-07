@@ -517,7 +517,8 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
         pixel_values (`torch.Tensor` of shape `(num_patches, 3 * patch_size ** 2)`, *optional*):
             Flattened RGB patches scattered into image placeholder tokens.
         inputs_embeds (`torch.Tensor` of shape `(batch_size, sequence_length, embedding_rank)`, *optional*):
-            Token embeddings before projection. Value embeddings require `input_ids` and are omitted on this path.
+            Token embeddings before projection. Value embeddings are omitted on this path, and image patches require
+            `input_ids` to locate their placeholder tokens.
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
@@ -528,6 +529,8 @@ class NeoMMEModel(NeoMMEPreTrainedModel):
             input_ids=input_ids, inputs_embeds=inputs_embeds
         )  # (batch_size, sequence_length, hidden_size)
         if pixel_values is not None:
+            if input_ids is None:
+                raise ValueError("`pixel_values` requires `input_ids` to locate image placeholder tokens.")
             hidden_states = self._scatter_patch_embeddings(input_ids, hidden_states, pixel_values)
 
         batch_size, seq_len = hidden_states.shape[:2]
