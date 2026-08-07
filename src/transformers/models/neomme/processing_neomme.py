@@ -159,6 +159,8 @@ class NeoMMEProcessor(ProcessorMixin):
                 "Pass exactly one of `text` or `images`: they are opposite retrieval sides, encoded in "
                 "separate forward passes."
             )
+        if "task" in kwargs.get("text_kwargs", {}):
+            raise ValueError("Pass `task` as a top-level processor argument, not inside `text_kwargs`.")
 
         output_kwargs = self._merge_kwargs(
             NeoMMEProcessorKwargs, tokenizer_init_kwargs=self.tokenizer.init_kwargs, **kwargs

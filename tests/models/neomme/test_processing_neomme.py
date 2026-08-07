@@ -221,6 +221,7 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         # Text queries are the other retrieval side: no vision keys.
         query_inputs = processor(text=["hello"], task="query")
         self.assertSetEqual(set(query_inputs.keys()), {"input_ids", "attention_mask"})
+        self.assertListEqual(processor(text=["hello"])["input_ids"].tolist(), query_inputs["input_ids"].tolist())
 
     def test_padding_and_return_tensors(self):
         """Padding and `return_tensors` used to be dropped; only `max_length` survived the merge."""
@@ -246,6 +247,8 @@ class NeoMMEProcessorTest(ProcessorTesterMixin, unittest.TestCase):
             processor(text=["hello world", "a"], padding=False)
         with self.assertRaises(ValueError):  # nothing to pad to
             processor(text=["hello"], padding="max_length")
+        with self.assertRaisesRegex(ValueError, "top-level processor argument"):
+            processor(text=["hello"], text_kwargs={"task": "document"})
 
     def test_tokenizer_init_padding_side(self):
         """`tokenizer.init_kwargs` padding_side must not be treated as a caller kwarg and refuse every text call."""
